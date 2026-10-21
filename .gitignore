@@ -1,0 +1,21 @@
+# build output
+build/
+*.apk
+*.apk.idsig
+
+# local signing material
+.keystore/
+*.jks
+*.keystore
+
+# IDE / OS junk
+.gradle/
+local.properties
+*.iml
+.idea/
+.DS_Store
+Thumbs.db
+
+# logs and captures
+*.log
+captures/
