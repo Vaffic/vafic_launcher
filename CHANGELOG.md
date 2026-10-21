@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1.6 — 2026-10-22
+
+- Fixed the long lists in the panels. The notification shade, the per-app
+  notification filter and the hidden apps list are cut off cleanly at the edge
+  of their window now: the rows no longer slide over the title or over the
+  **Clear notifications** button, and every notification can be reached with the
+  D-pad.
+- The list keeps its full height inside the window, so the scroll reaches the
+  last entry instead of stopping after a few rows.
+- The focus ring is now a small layer that rides on the focused card, so the
+  glass underneath it is no longer repainted on every frame of the rotation.
+- The screen is released a minute after the last key press, so the television
+  can fall asleep on its own.
+
 ## 1.1.5 — 2026-10-21
 
 - New background track: the full lossless FLAC (14:47) now plays as it is and

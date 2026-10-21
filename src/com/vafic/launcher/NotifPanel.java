@@ -116,9 +116,16 @@ public class NotifPanel extends Dialog {
         }
 
         listScroll.addView(list, new FrameLayout.LayoutParams(MATCH, WRAP));
+        // The list lives in a frame that cuts it off. A scroll view clips its
+        // content in the wrong coordinate space, so the rows would otherwise
+        // be drawn over the title above the list.
+        FrameLayout viewport = new FrameLayout(a);
+        viewport.setClipChildren(true);
+        viewport.setClipToPadding(true);
+        viewport.addView(listScroll, new FrameLayout.LayoutParams(MATCH, WRAP));
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(MATCH, WRAP);
         slp.topMargin = dp(4);
-        box.addView(listScroll, slp);
+        box.addView(viewport, slp);
 
         int clearable = 0;
         for (NotifListener.Entry e : entries) {

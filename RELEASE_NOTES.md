@@ -1,4 +1,4 @@
-# Vafic Launcher 1.1.5 — release notes
+# Vafic Launcher 1.1.6 — release notes
 
 Ready-to-paste text for the GitHub release page. The English block goes into the
 release body, the Russian block can be used for a Russian-speaking audience.
@@ -7,12 +7,27 @@ release body, the Russian block can be used for a Russian-speaking audience.
 
 ## English
 
-**Vafic Launcher 1.1.5** — a quiet, controller-first home screen for Android TV.
+**Vafic Launcher 1.1.6** — a quiet, controller-first home screen for Android TV.
 
 Three full rows, a fixed header, a dock of up to five apps, a reorderable
 library with hidden apps, a PS5-style focus outline and Windows-Aero glass
 surfaces. Plain Java, no AndroidX, no Gradle, no analytics, no network access,
 no diagnostic logging.
+
+### What is new in 1.1.6
+
+- **Long lists fixed.** The notification shade, the per-app notification filter
+  and the hidden apps list are cut off cleanly at the edge of their window now.
+  The rows no longer slide over the title or over the **Clear notifications**
+  button, and every notification can be reached with the D-pad.
+- **The list keeps its full height** inside the window, so the scroll reaches the
+  last entry instead of stopping after a few rows.
+- **A lighter focus ring.** The ring is a small layer that rides on the focused
+  card, so the glass underneath it is no longer repainted on every frame of the
+  rotation. The idle load of the launcher on a weak TV GPU fell from about half
+  of the CPU to nearly zero.
+- **The television can sleep.** The screen is released a minute after the last
+  key press instead of being held on forever.
 
 ### What is new in 1.1.5
 
@@ -87,11 +102,11 @@ the home app in the TV settings if another launcher is selected.
 ### Build
 
 - Universal APK, no ABI split.
-- Package `com.vafic.launcher`, version `1.1.5` (versionCode `7`).
+- Package `com.vafic.launcher`, version `1.1.6` (versionCode `8`).
 - Target SDK 34 (Android 14), minimum SDK 23 (Android 6.0).
 - Signed with the local debug keystore in `.keystore/` (ignored by git).
 - Size: 58237650 bytes.
-- SHA-256: `BF37FB8DACB8169C313B7AE3C0FF55D7D1F9C4938BD34915901D97370C0FDC70`
+- SHA-256: `7F9644AD4939F9549C55EA79F32FB039CCD490173E355612961DE376F614B3F6`
 
 The APK is larger than before because the lossless background track (14:47,
 44.1 kHz stereo FLAC) is bundled with it.
@@ -120,13 +135,28 @@ Get-FileHash .\vafic-launcher.apk -Algorithm SHA256
 
 ## Русский
 
-**Vafic Launcher 1.1.5** — тихий домашний экран для Android TV с управлением
+**Vafic Launcher 1.1.6** — тихий домашний экран для Android TV с управлением
 с пульта.
 
 Три полных ряда, закреплённая шапка, док до пяти приложений, переставляемая
 библиотека со скрытыми приложениями, обводка фокуса в духе PS5 и стеклянные
 поверхности в стиле Windows Aero. Чистый Java, без AndroidX и Gradle, без
 аналитики, без доступа в интернет и без диагностического логирования.
+
+### Что нового в 1.1.6
+
+- **Исправлены длинные списки.** Панель уведомлений, фильтр уведомлений по
+  приложениям и список скрытых приложений теперь аккуратно обрезаются по краю
+  окна: строки больше не наезжают на заголовок и на кнопку **Очистить
+  уведомления**, и до любого уведомления можно добраться стрелками.
+- **Список внутри окна сохраняет всю высоту**, поэтому прокрутка доходит до
+  последней записи, а не останавливается через несколько строк.
+- **Обводка фокуса стала легче.** Кольцо — небольшой собственный слой, который
+  едет по карточке, поэтому стекло под ним больше не перерисовывается каждый
+  кадр анимации. Фоновая нагрузка на слабом GPU телевизора упала примерно с
+  половины процессора до почти нуля.
+- **Телевизор может уснуть.** Экран отпускается через минуту после последнего
+  нажатия, а не удерживается включённым всегда.
 
 ### Что нового в 1.1.5
 
@@ -195,11 +225,11 @@ adb shell cmd notification allow_listener com.vafic.launcher/.NotifListener
 ### Сборка
 
 - Универсальный APK, без разделения по ABI.
-- Пакет `com.vafic.launcher`, версия `1.1.5` (versionCode `7`).
+- Пакет `com.vafic.launcher`, версия `1.1.6` (versionCode `8`).
 - Target SDK 34 (Android 14), минимальная версия — API 23 (Android 6.0).
 - Подписан локальным debug-keystore из `.keystore/` (исключён из git).
 - Размер: 58237650 байт.
-- SHA-256: `BF37FB8DACB8169C313B7AE3C0FF55D7D1F9C4938BD34915901D97370C0FDC70`
+- SHA-256: `7F9644AD4939F9549C55EA79F32FB039CCD490173E355612961DE376F614B3F6`
 
 APK стал больше, потому что в него вложена lossless фоновая дорожка
 (14:47, FLAC 44.1 кГц, стерео).

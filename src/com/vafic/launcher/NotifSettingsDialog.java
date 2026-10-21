@@ -147,13 +147,8 @@ public class NotifSettingsDialog extends Dialog {
 
         listScroll = new SmoothColumn(a, dp(286));
         listScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
-        // The title and the "show system" switch above must stay clean. Rows are
-        // clipped to the list viewport instead of drawing over the fixed header.
         listScroll.setClipChildren(true);
         listScroll.setClipToPadding(true);
-        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(MATCH, WRAP);
-        slp.topMargin = dp(8);
-        box.addView(listScroll, slp);
 
         list = new LinearLayout(a);
         list.setOrientation(LinearLayout.VERTICAL);
@@ -161,6 +156,17 @@ public class NotifSettingsDialog extends Dialog {
         list.setClipToPadding(false);
         list.setPadding(dp(8), dp(8), dp(8), dp(8));
         listScroll.addView(list, new FrameLayout.LayoutParams(MATCH, WRAP));
+
+        // The list lives in a frame that cuts it off. A scroll view clips its
+        // content in the wrong coordinate space, so the rows would otherwise
+        // be drawn over the title above the list.
+        FrameLayout viewport = new FrameLayout(a);
+        viewport.setClipChildren(true);
+        viewport.setClipToPadding(true);
+        viewport.addView(listScroll, new FrameLayout.LayoutParams(MATCH, WRAP));
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(MATCH, WRAP);
+        slp.topMargin = dp(8);
+        box.addView(viewport, slp);
 
         TextView foot = new TextView(a);
         foot.setText(Txt.s(a, "OK — скрыть или показывать      •      BACK — назад",

@@ -12,15 +12,17 @@ Windows Aero. Без AndroidX и Gradle; небольшой ресурсный �
 
 | Главный экран | Все приложения |
 |---|---|
-| ![Главный экран](screenshots/01-home.png) | ![Все приложения](screenshots/02-all-apps.png) |
+| ![Главный экран](screenshots/ru/01-home.png) | ![Все приложения](screenshots/ru/02-all-apps.png) |
 
 | Настройки лаунчера | Скрытые приложения |
 |---|---|
-| ![Настройки лаунчера](screenshots/07-settings.png) | ![Скрытые приложения](screenshots/09-hidden-apps.png) |
+| ![Настройки лаунчера](screenshots/ru/07-settings.png) | ![Скрытые приложения](screenshots/ru/09-hidden-apps.png) |
 
 | Уведомления | Меню приложения |
 |---|---|
-| ![Уведомления](screenshots/05-notifications.png) | ![Меню приложения](screenshots/04-app-menu.png) |
+| ![Уведомления](screenshots/ru/05-notifications.png) | ![Меню приложения](screenshots/ru/04-app-menu.png) |
+
+Английские скриншоты — в [screenshots/en](screenshots/en).
 
 ## Возможности
 

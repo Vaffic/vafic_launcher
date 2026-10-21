@@ -47,10 +47,32 @@ public class SmoothColumn extends ScrollView {
 
     @Override
     protected void onMeasure(int widthSpec, int heightSpec) {
-        if (maxHeight > 0) {
-            heightSpec = MeasureSpec.makeMeasureSpec(maxHeight, MeasureSpec.AT_MOST);
+        if (maxHeight <= 0 || getChildCount() == 0) {
+            super.onMeasure(widthSpec, heightSpec);
+            return;
         }
-        super.onMeasure(widthSpec, heightSpec);
+        // The content is measured without a limit: it may be taller than the
+        // window of the list, and that is what the spring scrolls. A frame
+        // layout would measure it with the size of the window, and then the
+        // last rows would be squeezed out of the list.
+        int w = MeasureSpec.getSize(widthSpec);
+        View child = getChildAt(0);
+        int childWidth = MeasureSpec.makeMeasureSpec(
+                w - getPaddingLeft() - getPaddingRight(), MeasureSpec.EXACTLY);
+        int childHeight = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
+        child.measure(childWidth, childHeight);
+        setMeasuredDimension(w, Math.min(child.getMeasuredHeight(), maxHeight));
+    }
+
+    @Override
+    protected void onLayout(boolean changed, int l, int t, int r, int b) {
+        super.onLayout(changed, l, t, r, b);
+        // A scroll view puts the offset back to the top of the content on
+        // every layout pass. Put it back where the spring left it.
+        int y = (int) targetY;
+        if (y > 0 && y != getScrollY()) {
+            super.scrollTo(0, y);
+        }
     }
 
     @Override

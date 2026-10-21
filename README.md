@@ -12,15 +12,17 @@ Russian.
 
 | Home | All apps |
 |---|---|
-| ![Home screen](screenshots/01-home.png) | ![All apps](screenshots/02-all-apps.png) |
+| ![Home screen](screenshots/en/01-home.png) | ![All apps](screenshots/en/02-all-apps.png) |
 
 | Launcher settings | Hidden apps |
 |---|---|
-| ![Launcher settings](screenshots/07-settings.png) | ![Hidden apps](screenshots/09-hidden-apps.png) |
+| ![Launcher settings](screenshots/en/07-settings.png) | ![Hidden apps](screenshots/en/09-hidden-apps.png) |
 
 | Notifications | App menu |
 |---|---|
-| ![Notifications](screenshots/05-notifications.png) | ![App menu](screenshots/04-app-menu.png) |
+| ![Notifications](screenshots/en/05-notifications.png) | ![App menu](screenshots/en/04-app-menu.png) |
+
+The Russian screenshots are in [screenshots/ru](screenshots/ru).
 
 ## Features
 

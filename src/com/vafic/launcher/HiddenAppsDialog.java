@@ -91,9 +91,6 @@ public class HiddenAppsDialog extends Dialog {
         listScroll.setOverScrollMode(View.OVER_SCROLL_NEVER);
         listScroll.setClipChildren(true);
         listScroll.setClipToPadding(true);
-        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(MATCH, WRAP);
-        slp.topMargin = dp(4);
-        box.addView(listScroll, slp);
 
         list = new LinearLayout(a);
         list.setOrientation(LinearLayout.VERTICAL);
@@ -101,6 +98,17 @@ public class HiddenAppsDialog extends Dialog {
         list.setClipToPadding(false);
         list.setPadding(dp(8), dp(8), dp(8), dp(8));
         listScroll.addView(list, new FrameLayout.LayoutParams(MATCH, WRAP));
+
+        // The list lives in a frame that cuts it off. A scroll view clips its
+        // content in the wrong coordinate space, so the rows would otherwise
+        // be drawn over the title above the list.
+        FrameLayout viewport = new FrameLayout(a);
+        viewport.setClipChildren(true);
+        viewport.setClipToPadding(true);
+        viewport.addView(listScroll, new FrameLayout.LayoutParams(MATCH, WRAP));
+        LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(MATCH, WRAP);
+        slp.topMargin = dp(4);
+        box.addView(viewport, slp);
 
         TextView foot = new TextView(a);
         foot.setText(Txt.s(a, "OK — показать      •      BACK — закрыть",
