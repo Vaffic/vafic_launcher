@@ -8,6 +8,20 @@ Russian.
 
 [Русская версия](README.ru.md)
 
+## Screenshots
+
+| Home | All apps |
+|---|---|
+| ![Home screen](screenshots/01-home.png) | ![All apps](screenshots/02-all-apps.png) |
+
+| Launcher settings | Hidden apps |
+|---|---|
+| ![Launcher settings](screenshots/07-settings.png) | ![Hidden apps](screenshots/09-hidden-apps.png) |
+
+| Notifications | App menu |
+|---|---|
+| ![Notifications](screenshots/05-notifications.png) | ![App menu](screenshots/04-app-menu.png) |
+
 ## Features
 
 - **Home.** Clock and localized date, a dock of up to five apps, and a fixed
@@ -161,6 +175,7 @@ vafic-launcher/
   res/values/             English app name
   res/values-ru/          Russian app name
   src/com/vafic/launcher/ plain-Java sources
+  screenshots/             pictures for the README and the release
   README.md
   README.ru.md
   RELEASE_NOTES.md

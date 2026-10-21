@@ -8,6 +8,20 @@ Windows Aero. Без AndroidX и Gradle; небольшой ресурсный �
 
 [English version](README.md)
 
+## Скриншоты
+
+| Главный экран | Все приложения |
+|---|---|
+| ![Главный экран](screenshots/01-home.png) | ![Все приложения](screenshots/02-all-apps.png) |
+
+| Настройки лаунчера | Скрытые приложения |
+|---|---|
+| ![Настройки лаунчера](screenshots/07-settings.png) | ![Скрытые приложения](screenshots/09-hidden-apps.png) |
+
+| Уведомления | Меню приложения |
+|---|---|
+| ![Уведомления](screenshots/05-notifications.png) | ![Меню приложения](screenshots/04-app-menu.png) |
+
 ## Возможности
 
 - **Главный экран.** Часы и локализованная дата, док до пяти приложений и
@@ -159,6 +173,7 @@ vafic-launcher/
   res/values/             английское название приложения
   res/values-ru/          русское название приложения
   src/com/vafic/launcher/ исходники на Java
+  screenshots/             картинки для README и релиза
   README.md
   README.ru.md
   RELEASE_NOTES.md
