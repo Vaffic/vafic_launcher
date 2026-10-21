@@ -1,4 +1,3 @@
-# vafic_launcher
 # Vafic Launcher
 
 A quiet, controller-first home screen for Android TV. Three full rows, a fixed
@@ -66,4 +65,117 @@ Russian.
 | BACK | Close a panel/menu, leave the library, or cancel a move |
 | HOME | Return to the home screen and focus the first dock card |
 
+## Install
 
+```powershell
+adb install -r vafic-launcher.apk
+adb shell cmd package set-home-activity com.vafic.launcher/.MainActivity
+adb shell cmd notification allow_listener com.vafic.launcher/.NotifListener
+```
+
+The last command is optional: without notification access the launcher still
+works, but the notification badge and shade stay empty. You can also grant access
+in **Settings → Apps → Special app access → Notification access**.
+
+Set Vafic Launcher as the home app in the TV settings if another launcher is
+currently selected. The APK targets Android 14 (API 34) and supports API 23+.
+
+## Settings
+
+Open the gear in the top status cluster (press Up from the dock and walk to the
+right). Launcher settings are not duplicated in the long-press menus.
+
+- **Background music** — the built-in ambient loop.
+- **Interface sounds** — focus ticks plus the forward/back notes.
+- **Language** — System / Русский / English in an anchored dropdown.
+- **App notifications** — per-app notification filter.
+- **Hidden apps** — the apps that were hidden from the library; open one to
+  bring it back, or restore all of them.
+- **System settings** — open the Android TV settings.
+- **Close** — leave settings.
+
+The background track is a full lossless FLAC in `assets/ambient.flac`. It is
+played as it is and loops seamlessly: the track fades out at the end and fades
+in at the beginning, so the loop point is smooth and the sound is untouched.
+The interface sounds are original synthesized WAV files in `assets/`:
+`tick.wav`, `forward.wav` and `back.wav`.
+
+## Build from source
+
+Requirements:
+
+- JDK 17+
+- Android SDK platform 34
+- Android SDK build-tools 34+
+- Windows PowerShell (the build script is PowerShell; the source is portable)
+
+Set the SDK and JDK locations, then run:
+
+```powershell
+$env:JAVA_HOME = "C:\path\to\jdk-17"
+$env:ANDROID_SDK_ROOT = "C:\path\to\Android\Sdk"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
+```
+
+The script uses `aapt2`, `javac`, `d8`, `zipalign` and `apksigner` directly.
+It writes `vafic-launcher.apk` next to the script.
+
+Signing:
+
+- By default a local debug keystore is created at `.keystore/vafic.keystore`
+  (ignored by git). This is fine for sideloading and personal builds. Keep this
+  file if you want future builds to install as an update over the current APK.
+- For a release, provide your own key:
+
+```powershell
+$env:VAFIC_KEYSTORE = "C:\keys\release.keystore"
+$env:VAFIC_KEYSTORE_PASS = "your-password"
+```
+
+Assets and resources are staged in the system temp directory because `aapt2` on
+Windows cannot open an asset or resource directory whose path contains Cyrillic
+characters. The script compiles `res/` into a temporary resource zip before
+linking.
+
+## Permissions
+
+| Permission | Why |
+|---|---|
+| `QUERY_ALL_PACKAGES` | List every installed app in the library and notification filter |
+| `ACCESS_NETWORK_STATE` | Show Wi-Fi/Ethernet/offline state |
+| `ACCESS_WIFI_STATE` | Read Wi-Fi signal level and SSID |
+| `BIND_NOTIFICATION_LISTENER_SERVICE` | Optional notification shade and badge |
+
+The app has no internet permission and does not modify other packages. Any
+system debloating is a separate device-level operation; it is not performed by
+the launcher. Uninstalling the launcher and selecting another home app is
+enough to revert the launcher itself.
+
+## Project layout
+
+```
+vafic-launcher/
+  AndroidManifest.xml
+  build.ps1
+  assets/                 background track and interface sounds
+  res/values/             English app name
+  res/values-ru/          Russian app name
+  src/com/vafic/launcher/ plain-Java sources
+  README.md
+  README.ru.md
+  RELEASE_NOTES.md
+  LICENSE
+  CHANGELOG.md
+```
+
+## Notes
+
+- The launcher does not bypass paid content, remove ads from other apps, or
+  include content from third-party services.
+- App names and notification text come from the installed apps and are shown
+  as provided by those apps.
+- The project is not affiliated with Google, Sony or any TV vendor.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
