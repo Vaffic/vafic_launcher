@@ -23,7 +23,7 @@ import java.util.List;
  * The apps hidden from the "All apps" library. Every row brings its app back;
  * the list is the only place where a hidden app can be restored.
  */
-public class HiddenAppsDialog extends Dialog {
+public class HiddenAppsDialog extends VaficDialog {
 
     public interface Listener {
         void onChanged();

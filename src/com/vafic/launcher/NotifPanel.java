@@ -27,7 +27,7 @@ import java.util.Date;
 import java.util.List;
 
 /** Dark liquid-glass notification shade listing active notifications. */
-public class NotifPanel extends Dialog {
+public class NotifPanel extends VaficDialog {
 
     private static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT;
     private static final int WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;

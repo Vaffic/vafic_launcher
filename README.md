@@ -1,9 +1,10 @@
 # Vafic Launcher
 
 A quiet, controller-first home screen for Android TV. Three full rows, a fixed
-header, a dock of up to five apps, a reorderable library with hidden apps, a
-PS5-style focus outline and Windows-Aero glass surfaces — built without AndroidX
-or Gradle. A small aapt2 resource step localizes the app name to English and
+header, a resizable dock of three to eight apps, optional weather and a short
+forecast next to the clock, a reorderable library with hidden apps, a PS5-style
+focus outline and Windows-Aero glass surfaces — built without AndroidX or
+Gradle. A small aapt2 resource step localizes the app name to English and
 Russian.
 
 [Русская версия](README.ru.md)
@@ -14,23 +15,39 @@ Russian.
 |---|---|
 | ![Home screen](screenshots/en/01-home.png) | ![All apps](screenshots/en/02-all-apps.png) |
 
-| Launcher settings | Hidden apps |
+| Weather | Sound |
 |---|---|
-| ![Launcher settings](screenshots/en/07-settings.png) | ![Hidden apps](screenshots/en/09-hidden-apps.png) |
+| ![Weather](screenshots/en/10-weather.png) | ![Sound](screenshots/en/11-sound.png) |
 
-| Notifications | App menu |
+| Dock size | Wallpaper |
 |---|---|
-| ![Notifications](screenshots/en/05-notifications.png) | ![App menu](screenshots/en/04-app-menu.png) |
+| ![Dock size](screenshots/en/12-dock-size.png) | ![Wallpaper](screenshots/en/13-wallpaper.png) |
 
-The Russian screenshots are in [screenshots/ru](screenshots/ru).
+| Launcher settings | Language |
+|---|---|
+| ![Launcher settings](screenshots/en/07-settings.png) | ![Language](screenshots/en/14-language.png) |
+
+| Hidden apps | Notifications |
+|---|---|
+| ![Hidden apps](screenshots/en/09-hidden-apps.png) | ![Notifications](screenshots/en/05-notifications.png) |
+
+More screenshots, including the app menu and network panel, are in
+[screenshots/en](screenshots/en). The Russian set is in
+[screenshots/ru](screenshots/ru).
 
 ## Features
 
-- **Home.** Clock and localized date, a dock of up to five apps, and a fixed
-  status cluster with notifications, network and **launcher settings**. Press Up
-  from the dock to enter the status cluster; Down returns to the dock. The gear
-  opens the launcher settings menu, which has a **System settings** entry for
-  Android TV settings.
+- **Home.** Clock and localized date, optional current weather with a short
+  forecast, a dock of three to eight apps, and a fixed status cluster with
+  notifications, network and **launcher settings**. Press Up from the dock to
+  enter the status cluster; Down returns to the dock. The gear opens the
+  launcher settings menu, which has a **System settings** entry for Android TV
+  settings.
+- **Weather.** Off by default. When enabled it shows the current temperature,
+  condition and a short forecast next to the clock. The city is detected
+  automatically or picked from a preset list / typed by hand, and the data can
+  be refreshed on demand. The whole section can be switched off, and while it is
+  off the launcher makes no weather requests.
 - **Hidden apps.** Long-press an app and choose **Hide**: it leaves the library
   and the dock. The launcher settings keep a **Hidden apps** list where every
   hidden app can be restored, or all of them at once.
@@ -45,7 +62,8 @@ The Russian screenshots are in [screenshots/ru](screenshots/ru).
   gradient travelling around it. The outline is drawn above the glass layers.
 - **Dock editing.** Long-press OK on a dock card to move, remove or hide it.
   Long-press OK in the library to add/remove an app from the dock, move it in
-  the library or hide it. The dock holds up to five apps.
+  the library or hide it. The dock holds three to eight apps; the **Dock size**
+  setting scales the cards and directly sets how many apps fit.
 - **First run.** The dock starts with a single **+** card. Press it (or Down) to
   open the library, then long-press an app and choose **Add to dock**. If the
   last app is removed, the **+** card returns.
@@ -58,23 +76,29 @@ The Russian screenshots are in [screenshots/ru](screenshots/ru).
   same Windows-Aero material: cool blue translucent glass, a milky gloss along
   the top edge, a diagonal reflection, a bright blue rim and a soft shadow that
   lifts the card off the wallpaper.
-- **Two interface sounds.** A rising glass note opens menus, the library and
+- **Separate sound controls.** A rising glass note opens menus, the library and
   apps; a falling note goes back and closes panels. Focus ticks are played on
   every selectable element: the dock tiles, the top status cluster and the rows
-  of the menus. Sounds can be switched off independently of the background
-  music.
+  of the menus. Background music and interface sounds each have their own
+  switch and volume slider. The music keeps its level while an interface sound
+  plays, and the framework's duplicate focus/click effects are suppressed, so
+  only the launcher's own sound is heard.
+- **Wallpaper.** Pick a personal photo or keep the built-in Aero background.
+  The **Background dim** slider applies the same darkening to both.
 - **Language selection.** System, Russian or English, chosen from an anchored
   dropdown. All launcher-owned strings switch immediately; changing the language
   recreates the activity cleanly. The system app name is localized too:
   **Vafic Launcher** / **Vafic Лаунчер**.
 - **Small and dependency-free.** Plain Java, no AndroidX, no analytics, no
-  network access, no diagnostic logging.
+  diagnostic logging. Network access is used only by the optional weather
+  section, and only while it is enabled.
 
 ## Controls
 
 | Button | Action |
 |---|---|
 | ← → ↑ ↓ | Move focus; in the library, move through the grid |
+| ← → on a slider | Change a volume, the wallpaper dim or the dock size |
 | ↑ from dock | Focus the status cluster (notifications / network / launcher settings) |
 | OK | Open an app / panel / menu item; finish a move |
 | Long OK | App menu: add/remove dock, move in the library, hide the app, or move a dock card |
@@ -101,8 +125,15 @@ currently selected. The APK targets Android 14 (API 34) and supports API 23+.
 Open the gear in the top status cluster (press Up from the dock and walk to the
 right). Launcher settings are not duplicated in the long-press menus.
 
-- **Background music** — the built-in ambient loop.
-- **Interface sounds** — focus ticks plus the forward/back notes.
+- **Sound** — independent switches and volume levels for the background music
+  and the interface sounds.
+- **Dock** — card size from smallest (up to eight apps) to largest (three
+  apps), limited to the largest size that still holds the current dock.
+- **Weather** — show or hide the whole section, show or hide the short
+  forecast, choose the city, refresh now. Off by default; no network requests
+  while off.
+- **Wallpaper** — choose a photo, restore the built-in background, and set the
+  background dim for either one.
 - **Language** — System / Русский / English in an anchored dropdown.
 - **App notifications** — per-app notification filter.
 - **Hidden apps** — the apps that were hidden from the library; open one to
@@ -158,14 +189,15 @@ linking.
 | Permission | Why |
 |---|---|
 | `QUERY_ALL_PACKAGES` | List every installed app in the library and notification filter |
+| `INTERNET` | Optional weather only; no requests while weather is off |
 | `ACCESS_NETWORK_STATE` | Show Wi-Fi/Ethernet/offline state |
 | `ACCESS_WIFI_STATE` | Read Wi-Fi signal level and SSID |
 | `BIND_NOTIFICATION_LISTENER_SERVICE` | Optional notification shade and badge |
 
-The app has no internet permission and does not modify other packages. Any
-system debloating is a separate device-level operation; it is not performed by
-the launcher. Uninstalling the launcher and selecting another home app is
-enough to revert the launcher itself.
+The app accesses the network only for the optional weather section and does not
+modify other packages. Any system debloating is a separate device-level
+operation; it is not performed by the launcher. Uninstalling the launcher and
+selecting another home app is enough to revert the launcher itself.
 
 ## Project layout
 

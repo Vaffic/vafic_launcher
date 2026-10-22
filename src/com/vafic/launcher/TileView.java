@@ -26,6 +26,7 @@ public class TileView extends LinearLayout {
     private final GlassDrawable fill;
     private final GlassDrawable rim;
     private final float density;
+    private final int cardHeightPx;
     private final float focusScale = 1.045f;
 
     private ValueAnimator focusAnim;
@@ -39,6 +40,7 @@ public class TileView extends LinearLayout {
     public TileView(Context c, int wPx, int hPx, int labelSp, int cornerDp, boolean withLabel) {
         super(c);
         density = c.getResources().getDisplayMetrics().density;
+        cardHeightPx = hPx;
 
         setOrientation(VERTICAL);
         setGravity(Gravity.CENTER_HORIZONTAL);
@@ -175,7 +177,9 @@ public class TileView extends LinearLayout {
             plate.setColor(0x1AFFFFFF);
             plate.setStroke(Math.max(1, Math.round(1.2f * density)), 0x3DFFFFFF);
             glyphView.setBackground(plate);
-            int size = Math.round(58 * density);
+            // The plate follows the card height, so the "+" stays balanced on
+            // both the wide three-app dock and the compact eight-app one.
+            int size = Math.round(Math.min(58 * density, cardHeightPx * 0.64f));
             FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(size, size, Gravity.CENTER);
             iconBox.addView(glyphView, lp);
         }

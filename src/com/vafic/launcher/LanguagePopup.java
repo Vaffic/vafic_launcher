@@ -18,7 +18,7 @@ import android.widget.TextView;
  * Anchored language menu. It opens directly under the Language row instead of
  * cycling through the values, so the available choices are always visible.
  */
-public class LanguagePopup extends Dialog {
+public class LanguagePopup extends VaficDialog {
 
     public interface Listener {
         void onPicked(String language);

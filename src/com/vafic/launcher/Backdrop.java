@@ -7,38 +7,89 @@ import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.RadialGradient;
 import android.graphics.Rect;
+import android.graphics.RectF;
 import android.graphics.Shader;
 import android.view.View;
 
 /**
  * Procedural tvOS-style wallpaper: bold colour fields softened into a dark base.
  * Rendered once into a half-resolution bitmap, so the launcher stays light on memory.
+ * When the user picks a photo, it is drawn instead; both the photo and the
+ * generated wallpaper are darkened by the chosen amount, and the generated
+ * wallpaper comes back as soon as the photo is removed.
  */
 public class Backdrop extends View {
 
     private final Paint bitmapPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final Rect dst = new Rect();
+    private final RectF photoDst = new RectF();
     private Bitmap cached;
+    private Bitmap custom;
+    private int dimPercent = 35;
 
     public Backdrop(Context c) {
         super(c);
+    }
+
+    /** Replaces the generated backdrop with a personal photo; null restores it. */
+    public void setCustom(Bitmap b) {
+        if (custom != null && custom != b) custom.recycle();
+        custom = b;
+        if (b == null) rebuild();
+        invalidate();
+    }
+
+    /** How much the wallpaper is darkened, 0..80 percent. */
+    public void setDim(int percent) {
+        dimPercent = Math.max(0, Math.min(80, percent));
+        invalidate();
+    }
+
+    private void rebuild() {
+        int width = getWidth();
+        int height = getHeight();
+        if (width <= 0 || height <= 0) return;
+        if (cached != null) cached.recycle();
+        cached = Bitmap.createBitmap(Math.max(1, width / 2), Math.max(1, height / 2),
+                Bitmap.Config.ARGB_8888);
+        render(cached);
+        invalidate();
     }
 
     @Override
     protected void onSizeChanged(int width, int height, int oldw, int oldh) {
         super.onSizeChanged(width, height, oldw, oldh);
         if (width <= 0 || height <= 0) return;
-        if (cached != null) cached.recycle();
-        cached = Bitmap.createBitmap(Math.max(1, width / 2), Math.max(1, height / 2),
-                Bitmap.Config.ARGB_8888);
-        render(cached);
+        if (custom == null) {
+            rebuild();
+        } else if (cached != null) {
+            // The photo covers the whole view; the generated bitmap is not needed.
+            cached.recycle();
+            cached = null;
+        }
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
-        if (cached == null) return;
-        dst.set(0, 0, getWidth(), getHeight());
-        canvas.drawBitmap(cached, null, dst, bitmapPaint);
+        if (custom != null && !custom.isRecycled() && custom.getWidth() > 0
+                && custom.getHeight() > 0) {
+            float scale = Math.max(getWidth() / (float) custom.getWidth(),
+                    getHeight() / (float) custom.getHeight());
+            float w = custom.getWidth() * scale;
+            float h = custom.getHeight() * scale;
+            float left = (getWidth() - w) / 2f;
+            float top = (getHeight() - h) / 2f;
+            photoDst.set(left, top, left + w, top + h);
+            canvas.drawBitmap(custom, null, photoDst, bitmapPaint);
+        } else {
+            if (cached == null) return;
+            dst.set(0, 0, getWidth(), getHeight());
+            canvas.drawBitmap(cached, null, dst, bitmapPaint);
+        }
+        // The dim is a property of the wallpaper as a whole, so it applies to
+        // the generated backdrop as well as to a user photo.
+        int alpha = Math.round(dimPercent / 100f * 255f);
+        if (alpha > 0) canvas.drawColor(alpha << 24);
     }
 
     private void render(Bitmap bmp) {

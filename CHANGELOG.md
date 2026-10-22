@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.2.0 — 2026-10-22
+
+- Added optional weather next to the clock: the current temperature, condition
+  and a short forecast for the next days. The new **Weather** section in the
+  launcher settings can hide the whole widget, hide only the forecast, detect
+  the city by network, pick a preset or type a city, and refresh on demand.
+  Weather is off by default and starts no requests while it is switched off.
+  Open-Meteo is the primary source; wttr.in is used when Open-Meteo is not
+  reachable from the television's network.
+- The dock now has a **size** setting instead of a fixed app count. Six levels
+  scale the cards from the smallest size (up to eight apps) to the largest
+  (three apps); the chosen size directly sets how many apps fit. The slider
+  stops at the largest size that still holds every app currently in the dock.
+  Trying to grow past it keeps the apps in place and shows a short reminder to
+  remove an app from the dock first. The settings summary shows the chosen size
+  and capacity.
+- Split the **Sound** section into independent switches and volume sliders for
+  the background music and the interface sounds. The music no longer dips while
+  a tick or a note plays.
+- The launcher no longer changes the television's system volume stream. On this
+  TV `STREAM_SYSTEM` is aliased to `STREAM_MUSIC`, so the old stream mute also
+  muted everything else and made the audio cut out when entering or leaving
+  apps. Framework focus and click effects are now suppressed inside the
+  launcher: D-pad focus is moved by the app itself, so ViewRootImpl never plays
+  its own navigation tick, and system click effects are switched off. Only the
+  launcher's own tick and notes are heard.
+- The **Background dim** slider now applies to the built-in Aero wallpaper as
+  well as to a user photo.
+- Opening the language picker keeps the focus and the highlight on the
+  **Language** row behind the popup instead of jumping to the first setting.
+- Volume preferences saved as whole percentages by early 1.2 test builds are
+  read correctly instead of crashing the sound settings.
+- Release build remains free of diagnostic logging.
+
 ## 1.1.6 — 2026-10-22
 
 - Fixed the long lists in the panels. The notification shade, the per-app

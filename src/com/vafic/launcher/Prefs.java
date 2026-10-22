@@ -13,16 +13,30 @@ import java.util.Set;
 /** Persisted launcher state: dock apps, library order, audio, language and hidden notifications. */
 public final class Prefs {
 
-    public static final int MAX_DOCK = 5;
+    /** The dock can hold 3 to 8 apps; the limit is user-configurable. */
+    public static final int MIN_DOCK = 3;
+    public static final int MAX_DOCK = 8;
+    public static final int DEFAULT_DOCK = 5;
 
     private static final String FILE = "vafic";
     private static final String KEY_HOME = "home";
     private static final String KEY_LIBRARY_ORDER = "library_order";
     private static final String KEY_MUSIC = "music";
+    private static final String KEY_MUSIC_VOLUME = "music_volume";
     private static final String KEY_SFX = "sfx";
+    private static final String KEY_SFX_VOLUME = "sfx_volume";
     private static final String KEY_LANGUAGE = "language";
     private static final String KEY_BLOCKED = "blocked_notifications";
     private static final String KEY_HIDDEN = "hidden_apps";
+    private static final String KEY_DOCK_SIZE = "dock_size";
+    private static final String KEY_WEATHER = "weather";
+    private static final String KEY_WEATHER_FORECAST = "weather_forecast";
+    private static final String KEY_WEATHER_CITY = "weather_city";
+    private static final String KEY_WEATHER_LAT = "weather_lat";
+    private static final String KEY_WEATHER_LON = "weather_lon";
+    private static final String KEY_WEATHER_CACHE = "weather_cache";
+    private static final String KEY_WALLPAPER = "wallpaper";
+    private static final String KEY_WALLPAPER_DIM = "wallpaper_dim";
 
     private Prefs() {
     }
@@ -31,21 +45,23 @@ public final class Prefs {
         return c.getSharedPreferences(FILE, Context.MODE_PRIVATE);
     }
 
-    /** Dock apps, never more than five. */
+    /** Dock apps, never more than the configured dock size. */
     public static List<String> home(Context c) {
         String s = sp(c).getString(KEY_HOME, null);
         List<String> out = new ArrayList<>();
         if (s != null && !s.trim().isEmpty()) {
             out.addAll(Arrays.asList(s.split(",")));
         }
-        if (out.size() > MAX_DOCK) {
-            out = new ArrayList<>(out.subList(0, MAX_DOCK));
+        int max = dockSize(c);
+        if (out.size() > max) {
+            out = new ArrayList<>(out.subList(0, max));
         }
         return out;
     }
 
     public static void save(Context c, List<String> pkgs) {
-        List<String> cut = pkgs.size() > MAX_DOCK ? pkgs.subList(0, MAX_DOCK) : pkgs;
+        int max = dockSize(c);
+        List<String> cut = pkgs.size() > max ? pkgs.subList(0, max) : pkgs;
         sp(c).edit().putString(KEY_HOME, TextUtils.join(",", cut)).apply();
     }
 
@@ -57,7 +73,7 @@ public final class Prefs {
             save(c, cur);
             return true;
         }
-        if (cur.size() >= MAX_DOCK) return false;
+        if (cur.size() >= dockSize(c)) return false;
         cur.add(pkg);
         save(c, cur);
         return true;
@@ -115,6 +131,162 @@ public final class Prefs {
 
     public static void setSfx(Context c, boolean on) {
         sp(c).edit().putBoolean(KEY_SFX, on).apply();
+    }
+
+    /** Background music level, 0..1. The default keeps it well under the interface sounds. */
+    public static float musicVolume(Context c) {
+        return clamp(readFloat(sp(c), KEY_MUSIC_VOLUME, 0.16f), 0f, 1f);
+    }
+
+    public static void setMusicVolume(Context c, float volume) {
+        sp(c).edit().putFloat(KEY_MUSIC_VOLUME, clamp(volume, 0f, 1f)).apply();
+    }
+
+    /** Interface sound level, 0..1. 1 is the level the launcher was tuned with. */
+    public static float sfxVolume(Context c) {
+        return clamp(readFloat(sp(c), KEY_SFX_VOLUME, 1f), 0f, 1f);
+    }
+
+    public static void setSfxVolume(Context c, float volume) {
+        sp(c).edit().putFloat(KEY_SFX_VOLUME, clamp(volume, 0f, 1f)).apply();
+    }
+
+    // ---- dock ----
+
+    /** How many apps the dock can hold, 3 to 8. */
+    public static int dockSize(Context c) {
+        return Math.max(MIN_DOCK, Math.min(MAX_DOCK, readInt(sp(c), KEY_DOCK_SIZE, DEFAULT_DOCK)));
+    }
+
+    /** Shrinking the dock drops the apps that no longer fit, so they never come back by surprise. */
+    public static void setDockSize(Context c, int size) {
+        int value = Math.max(MIN_DOCK, Math.min(MAX_DOCK, size));
+        sp(c).edit().putInt(KEY_DOCK_SIZE, value).apply();
+        List<String> cur = home(c);
+        save(c, cur);
+    }
+
+    // ---- weather ----
+
+    public static boolean weather(Context c) {
+        return sp(c).getBoolean(KEY_WEATHER, false);
+    }
+
+    public static void setWeather(Context c, boolean on) {
+        sp(c).edit().putBoolean(KEY_WEATHER, on).apply();
+    }
+
+    public static boolean weatherForecast(Context c) {
+        return sp(c).getBoolean(KEY_WEATHER_FORECAST, true);
+    }
+
+    public static void setWeatherForecast(Context c, boolean on) {
+        sp(c).edit().putBoolean(KEY_WEATHER_FORECAST, on).apply();
+    }
+
+    /** City name shown to the user; empty means "detect by IP". */
+    public static String weatherCity(Context c) {
+        String s = sp(c).getString(KEY_WEATHER_CITY, "");
+        return s == null ? "" : s;
+    }
+
+    /** True once a place (city name + coordinates) has been resolved. */
+    public static boolean hasWeatherPlace(Context c) {
+        return !Float.isNaN(sp(c).getFloat(KEY_WEATHER_LAT, Float.NaN));
+    }
+
+    public static float weatherLat(Context c) {
+        return sp(c).getFloat(KEY_WEATHER_LAT, Float.NaN);
+    }
+
+    public static float weatherLon(Context c) {
+        return sp(c).getFloat(KEY_WEATHER_LON, Float.NaN);
+    }
+
+    public static void setWeatherPlace(Context c, String city, double lat, double lon) {
+        sp(c).edit()
+                .putString(KEY_WEATHER_CITY, city == null ? "" : city)
+                .putFloat(KEY_WEATHER_LAT, (float) lat)
+                .putFloat(KEY_WEATHER_LON, (float) lon)
+                .apply();
+    }
+
+    public static void setWeatherCityOnly(Context c, String city) {
+        sp(c).edit().putString(KEY_WEATHER_CITY, city == null ? "" : city).apply();
+    }
+
+    public static void clearWeatherPlace(Context c) {
+        sp(c).edit().remove(KEY_WEATHER_CITY).remove(KEY_WEATHER_LAT)
+                .remove(KEY_WEATHER_LON).apply();
+    }
+
+    public static String weatherCache(Context c) {
+        String s = sp(c).getString(KEY_WEATHER_CACHE, "");
+        return s == null ? "" : s;
+    }
+
+    public static void setWeatherCache(Context c, String value) {
+        sp(c).edit().putString(KEY_WEATHER_CACHE, value).apply();
+    }
+
+    // ---- wallpaper ----
+
+    /** Absolute path of the custom wallpaper, or an empty string for the built-in one. */
+    public static String wallpaper(Context c) {
+        String s = sp(c).getString(KEY_WALLPAPER, "");
+        return s == null ? "" : s;
+    }
+
+    public static void setWallpaper(Context c, String path) {
+        sp(c).edit().putString(KEY_WALLPAPER, path == null ? "" : path).apply();
+    }
+
+    /** How much the wallpaper is darkened for readability, 0..80 percent. */
+    public static int wallpaperDim(Context c) {
+        return Math.max(0, Math.min(80, readInt(sp(c), KEY_WALLPAPER_DIM, 35)));
+    }
+
+    public static void setWallpaperDim(Context c, int percent) {
+        sp(c).edit().putInt(KEY_WALLPAPER_DIM, Math.max(0, Math.min(80, percent))).apply();
+    }
+
+    /**
+     * SharedPreferences throws when a key holds another type. Early test builds
+     * of 1.2 stored the volume as an integer percent, so values are read as a
+     * number and converted instead of trusting getFloat().
+     */
+    private static float readFloat(SharedPreferences sp, String key, float def) {
+        try {
+            Object value = sp.getAll().get(key);
+            float v;
+            if (value instanceof Number) {
+                v = ((Number) value).floatValue();
+            } else if (value instanceof String) {
+                v = Float.parseFloat((String) value);
+            } else {
+                return def;
+            }
+            // A whole percent (16, 50, 100) is folded back into 0..1.
+            if (v > 1f && v <= 100f) v /= 100f;
+            return v;
+        } catch (Exception e) {
+            return def;
+        }
+    }
+
+    private static int readInt(SharedPreferences sp, String key, int def) {
+        try {
+            Object value = sp.getAll().get(key);
+            if (value instanceof Number) return ((Number) value).intValue();
+            if (value instanceof String) return Integer.parseInt((String) value);
+        } catch (Exception e) {
+            // Fall through to the default.
+        }
+        return def;
+    }
+
+    private static float clamp(float v, float min, float max) {
+        return v < min ? min : (v > max ? max : v);
     }
 
     // ---- language ----

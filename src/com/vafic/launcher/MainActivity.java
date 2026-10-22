@@ -2,20 +2,25 @@ package com.vafic.launcher;
 
 import android.app.Activity;
 import android.app.Dialog;
+import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
 import android.media.SoundPool;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Process;
 import android.os.SystemClock;
 import android.text.TextUtils;
 import android.view.Gravity;
@@ -59,6 +64,9 @@ public class MainActivity extends Activity {
     /** How long the screen stays on after the last key press. */
     private static final long KEEP_AWAKE_MS = 60000L;
 
+    /** Request code for the system image picker. */
+    private static final int REQ_WALLPAPER = 77;
+
     private final Handler handler = new Handler(Looper.getMainLooper());
     private SimpleDateFormat timeFmt;
     private SimpleDateFormat dateFmt;
@@ -75,12 +83,16 @@ public class MainActivity extends Activity {
     private GridLayout grid;
     private TextView clock;
     private TextView date;
+    private TextView weatherNow;
+    private TextView weatherForecast;
     private TextView allHint;
     private TextView hint;
     private TextView libraryNotice;
     private TextView libraryBackHint;
     private StatusBar statusBar;
     private FocusRing ring;
+    private boolean weatherLoading;
+    private boolean weatherFailed;
 
     private boolean libraryOpen;
     private boolean libraryBuilt;
@@ -116,10 +128,7 @@ public class MainActivity extends Activity {
 
     private MediaPlayer music;
     private Runnable musicFade;
-    private Runnable musicDuck;
     private boolean musicLoading;
-    /** Background music level. The interface sounds have to stay on top of it. */
-    private static final float MUSIC_VOLUME = 0.16f;
     private SoundPool sfx;
     private int tickSound;
     private int forwardSound;
@@ -159,9 +168,13 @@ public class MainActivity extends Activity {
         // released again afterwards, so the TV is allowed to fall asleep.
         keepAwake();
         setContentView(build());
+        Ui.disableSystemClicks(root);
         // Drop the old MediaPlayer cache copy from earlier versions.
         new File(getCacheDir(), "vafic-ambient-48.wav").delete();
         initSoundEffects();
+        if (backdrop != null) backdrop.setDim(Prefs.wallpaperDim(this));
+        loadWallpaperAsync();
+        applyWeather();
         // The artwork of the installed apps is decoded in the background, so
         // the library opens without a stall.
         AppRepo.prefetchArtwork(this);
@@ -177,6 +190,9 @@ public class MainActivity extends Activity {
                                 || !newFocus.isClickable()) return;
                         View root = newFocus.getRootView();
                         if (root == null || !root.hasWindowFocus()) return;
+                        // The framework would add its own click on top of our
+                        // tick; every focused control is silent instead.
+                        newFocus.setSoundEffectsEnabled(false);
                         playNavTick();
                     }
                 });
@@ -281,6 +297,21 @@ public class MainActivity extends Activity {
         date.setPadding(0, dp(8), 0, 0);
         clockBox.addView(date, new LinearLayout.LayoutParams(WRAP, WRAP));
 
+        weatherNow = new TextView(this);
+        weatherNow.setTextColor(0xE6FFFFFF);
+        weatherNow.setTextSize(16);
+        weatherNow.setLetterSpacing(0.01f);
+        weatherNow.setPadding(0, dp(10), 0, 0);
+        weatherNow.setVisibility(View.GONE);
+        clockBox.addView(weatherNow, new LinearLayout.LayoutParams(WRAP, WRAP));
+
+        weatherForecast = new TextView(this);
+        weatherForecast.setTextColor(0x80FFFFFF);
+        weatherForecast.setTextSize(12);
+        weatherForecast.setPadding(0, dp(4), 0, 0);
+        weatherForecast.setVisibility(View.GONE);
+        clockBox.addView(weatherForecast, new LinearLayout.LayoutParams(WRAP, WRAP));
+
         header.addView(clockBox, new LinearLayout.LayoutParams(WRAP, WRAP));
         header.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
 
@@ -363,7 +394,9 @@ public class MainActivity extends Activity {
         dockRow.setPadding(dp(22), dp(13), dp(22), dp(13));
         dock.addView(dockRow, new FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER));
 
-        bottom.addView(dock, new LinearLayout.LayoutParams(MATCH, WRAP));
+        // The plate hugs the cards: with three apps it is a smaller island,
+        // with eight it grows wider and the cards become compact.
+        bottom.addView(dock, new LinearLayout.LayoutParams(WRAP, WRAP));
 
         FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(MATCH, WRAP, Gravity.BOTTOM);
         blp.leftMargin = dp(64);
@@ -381,9 +414,19 @@ public class MainActivity extends Activity {
 
         dockRow.removeAllViews();
         List<AppRepo.App> apps = AppRepo.homeApps(this);
+        int capacity = Prefs.dockSize(this);
+        int tileDp = dockTileWidth(capacity);
+        int tileHdp = Math.round(tileDp * 82f / 146f);
+        int labelSp = Math.max(8, Math.min(14, Math.round(12f * tileDp / 146f)));
+        int corner = Math.max(12, Math.min(24, Math.round(20f * tileDp / 146f)));
+        int gap = capacity >= 7 ? dp(8) : dp(12);
+        int padH = Math.max(dp(8), dp(22f * tileDp / 146f));
+        int padV = Math.max(dp(5), dp(13f * tileDp / 146f));
+        dockRow.setPadding(padH, padV, padH, padV);
+
         if (apps.isEmpty()) {
-            TileView add = tile(Txt.s(this, "Добавить", "Add apps"), 146, 82, 12, 20);
-            add.setGlyph("+", 34);
+            TileView add = tile(Txt.s(this, "Добавить", "Add apps"), tileDp, tileHdp, labelSp, corner);
+            add.setGlyph("+", Math.max(22, Math.round(34f * tileDp / 146f)));
             add.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
@@ -395,7 +438,7 @@ public class MainActivity extends Activity {
         for (int i = 0; i < apps.size(); i++) {
             final AppRepo.App a = apps.get(i);
             final int pos = i;
-            final TileView v = tile(a.label, 146, 82, 12, 20);
+            final TileView v = tile(a.label, tileDp, tileHdp, labelSp, corner);
             bindArt(v, a, true);
             v.setOnClickListener(new View.OnClickListener() {
                 @Override
@@ -411,7 +454,7 @@ public class MainActivity extends Activity {
                 }
             });
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(WRAP, WRAP);
-            if (i > 0) lp.leftMargin = dp(12);
+            if (i > 0) lp.leftMargin = gap;
             dockRow.addView(v, lp);
         }
 
@@ -437,6 +480,20 @@ public class MainActivity extends Activity {
         } else if (first) {
             focusDock(0);
         }
+    }
+
+    /**
+     * Dock card width in dp for the chosen capacity. Three apps get wide
+     * covers, eight compact ones; the result is clamped so the plate always
+     * fits between the side margins of the bottom cluster.
+     */
+    private int dockTileWidth(int count) {
+        float desiredDp = 180f - (count - 3) * 16.8f;
+        int padDp = Math.max(10, Math.round(22f * desiredDp / 146f));
+        int gapDp = count >= 7 ? 8 : 12;
+        int screenDp = Math.round(getResources().getDisplayMetrics().widthPixels / density);
+        int fit = (screenDp - 128 - padDp * 2 - gapDp * (count - 1)) / count;
+        return Math.min(Math.round(desiredDp), Math.max(72, fit));
     }
 
     private void focusDock(final int index) {
@@ -1053,9 +1110,10 @@ public class MainActivity extends Activity {
                         renderDock(false);
                     } else {
                         if (!Prefs.toggle(MainActivity.this, a.pkg)) {
+                            int maxDock = Prefs.dockSize(MainActivity.this);
                             showLibraryNotice(Txt.s(MainActivity.this,
-                                    "На доке максимум 5 приложений",
-                                    "The dock holds up to 5 apps"), 3500);
+                                    "На доке максимум " + maxDock + " приложений",
+                                    "The dock holds up to " + maxDock + " apps"), 3500);
                             return;
                         }
                         renderDock(false);
@@ -1241,14 +1299,23 @@ public class MainActivity extends Activity {
         ring.hide();
         tracked(new SettingsPanel(this, new SettingsPanel.Listener() {
             @Override
-            public void onMusicChanged(boolean on) {
-                if (on) startMusic();
-                else stopMusic();
+            public void onOpenSound() {
+                showSoundSettings();
             }
 
             @Override
-            public void onSfxChanged(boolean on) {
-                if (on) playForward();
+            public void onOpenDock() {
+                showDockSettings();
+            }
+
+            @Override
+            public void onOpenWeather() {
+                showWeatherSettings();
+            }
+
+            @Override
+            public void onOpenWallpaper() {
+                showWallpaperSettings();
             }
 
             @Override
@@ -1279,6 +1346,113 @@ public class MainActivity extends Activity {
             @Override
             public void onClose() {
                 playBack();
+            }
+        })).show();
+    }
+
+    private void showSoundSettings() {
+        if (isFinishing()) return;
+        playForward();
+        ring.hide();
+        tracked(new SoundSettingsDialog(this, new SoundSettingsDialog.Listener() {
+            @Override
+            public void onMusicChanged(boolean on) {
+                if (on) startMusic();
+                else stopMusic();
+            }
+
+            @Override
+            public void onSfxChanged(boolean on) {
+                if (on) playForward();
+            }
+
+            @Override
+            public void onMusicVolume(int percent) {
+                applyMusicVolume();
+            }
+
+            @Override
+            public void onSfxVolume(int percent) {
+                // A tick at the new level: the slider is silent otherwise.
+                playNavTick();
+            }
+        })).show();
+    }
+
+    private void showDockSettings() {
+        if (isFinishing()) return;
+        playForward();
+        ring.hide();
+        tracked(new DockSettingsDialog(this, new DockSettingsDialog.Listener() {
+            @Override
+            public void onDockChanged(int count) {
+                renderDock(false);
+                focusDock(Math.min(dockIndex, Math.max(0, dockRow.getChildCount() - 1)));
+            }
+        })).show();
+    }
+
+    private void showWeatherSettings() {
+        if (isFinishing()) return;
+        playForward();
+        ring.hide();
+        tracked(new WeatherSettingsDialog(this, new WeatherSettingsDialog.Listener() {
+            @Override
+            public void onWeatherChanged() {
+                weatherFailed = false;
+                applyWeather();
+                if (Prefs.weather(MainActivity.this)) refreshWeather(true);
+                scheduleWeather();
+            }
+
+            @Override
+            public void onForecastChanged() {
+                applyWeather();
+            }
+
+            @Override
+            public void onPlacePicked(String name, double lat, double lon) {
+                weatherFailed = false;
+                applyWeather();
+                refreshWeather(true);
+                scheduleWeather();
+            }
+
+            @Override
+            public void onCityTyped(String name) {
+                resolveWeatherCity(name);
+            }
+
+            @Override
+            public void onRefresh() {
+                weatherFailed = false;
+                refreshWeather(true);
+                scheduleWeather();
+            }
+        })).show();
+    }
+
+    private void showWallpaperSettings() {
+        if (isFinishing()) return;
+        playForward();
+        ring.hide();
+        tracked(new WallpaperDialog(this, new WallpaperDialog.Listener() {
+            @Override
+            public void onPickImage() {
+                pickWallpaper();
+            }
+
+            @Override
+            public void onReset() {
+                Prefs.setWallpaper(MainActivity.this, "");
+                File f = new File(getFilesDir(), "wallpaper.jpg");
+                if (f.exists()) f.delete();
+                if (backdrop != null) backdrop.setCustom(null);
+            }
+
+            @Override
+            public void onDimChanged(int percent) {
+                if (backdrop != null) backdrop.setDim(percent);
             }
         })).show();
     }
@@ -1370,7 +1544,281 @@ public class MainActivity extends Activity {
         date.setText(d);
     }
 
+    // --------------------------------------------------------------- weather
+
+    /** Re-renders the clock-area weather from the cache; no network here. */
+    private void applyWeather() {
+        if (weatherNow == null || weatherForecast == null) return;
+        if (!Prefs.weather(this)) {
+            weatherNow.setVisibility(View.GONE);
+            weatherForecast.setVisibility(View.GONE);
+            return;
+        }
+
+        WeatherRepo.Data d = WeatherRepo.cached(this);
+        if (d == null) {
+            // Before the first answer (or while the network is down) the line
+            // stays out of the way unless a refresh has already failed.
+            if (weatherFailed && !weatherLoading) {
+                weatherNow.setText(Txt.s(this, "Погода недоступна", "Weather unavailable"));
+                weatherNow.setVisibility(View.VISIBLE);
+            } else {
+                weatherNow.setVisibility(View.GONE);
+            }
+            weatherForecast.setVisibility(View.GONE);
+            return;
+        }
+
+        String city = d.city.isEmpty() ? "" : d.city + "  \u00B7  ";
+        weatherNow.setText(city + WeatherRepo.signed(d.temp) + "\u00B0  "
+                + WeatherRepo.condition(this, d.code));
+        weatherNow.setVisibility(View.VISIBLE);
+
+        if (Prefs.weatherForecast(this) && !d.days.isEmpty()) {
+            StringBuilder b = new StringBuilder();
+            for (WeatherRepo.Day day : d.days) {
+                if (b.length() > 0) b.append("    ");
+                b.append(WeatherRepo.dayName(this, day.iso)).append(' ')
+                        .append(WeatherRepo.signed(day.max)).append("\u00B0/")
+                        .append(WeatherRepo.signed(day.min)).append("\u00B0");
+            }
+            weatherForecast.setText(b.toString());
+            weatherForecast.setVisibility(View.VISIBLE);
+        } else {
+            weatherForecast.setVisibility(View.GONE);
+        }
+    }
+
+    /**
+     * Asks for fresh weather when the cache is old. A manual refresh passes
+     * force, the automatic one is happy with data younger than half an hour.
+     */
+    private void refreshWeather(boolean force) {
+        if (!Prefs.weather(this)) {
+            applyWeather();
+            return;
+        }
+        if (!force && !WeatherRepo.isStale(this)) {
+            applyWeather();
+            scheduleWeather();
+            return;
+        }
+        if (weatherLoading) return;
+        weatherLoading = true;
+        WeatherRepo.refresh(this, new WeatherRepo.Callback() {
+            @Override
+            public void onData(WeatherRepo.Data d) {
+                weatherLoading = false;
+                weatherFailed = d == null;
+                applyWeather();
+                scheduleWeather();
+            }
+        });
+    }
+
+    private void scheduleWeather() {
+        handler.removeCallbacks(weatherTick);
+        if (!Prefs.weather(this)) return;
+        // A failed request is retried sooner; a good cache waits the full half hour.
+        long delay = weatherFailed ? 5L * 60L * 1000L : WeatherRepo.STALE_MS;
+        handler.postDelayed(weatherTick, delay);
+    }
+
+    /** Geocodes a typed city, then refreshes the forecast for it. */
+    private void resolveWeatherCity(String name) {
+        // A switched-off weather section must not start any network work,
+        // not even a geocoding lookup for a city typed in the settings.
+        if (!Prefs.weather(this)) return;
+        WeatherRepo.resolveCity(this, name, new WeatherRepo.PlaceCallback() {
+            @Override
+            public void onPlace(boolean ok) {
+                if (ok) {
+                    weatherFailed = false;
+                    applyWeather();
+                    refreshWeather(true);
+                    scheduleWeather();
+                } else if (!isFinishing()) {
+                    tracked(new InfoDialog(MainActivity.this,
+                            Txt.s(MainActivity.this, "Город не найден", "City not found"),
+                            Txt.s(MainActivity.this,
+                                    "Проверьте название и попробуйте ещё раз.",
+                                    "Check the name and try again."))).show();
+                }
+            }
+        });
+    }
+
+    // ------------------------------------------------------------- wallpaper
+
+    private static final int MAX_WALLPAPER_SIDE = 1920;
+
+    /** Loads the saved photo from the app storage, if there is one. */
+    private void loadWallpaperAsync() {
+        final String path = Prefs.wallpaper(this);
+        final File file = path.isEmpty() ? null : new File(path);
+        if (file == null || !file.exists()) {
+            if (!path.isEmpty()) Prefs.setWallpaper(this, "");
+            if (backdrop != null) backdrop.setCustom(null);
+            return;
+        }
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+                } catch (Exception ignored) {
+                }
+                final Bitmap bitmap = decodeWallpaperFile(file, wallpaperMaxSide());
+                handler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (isFinishing() || bitmap == null) {
+                            if (bitmap != null) bitmap.recycle();
+                            return;
+                        }
+                        if (backdrop != null) backdrop.setCustom(bitmap);
+                    }
+                });
+            }
+        }, "vafic-wallpaper-load").start();
+    }
+
+    /** Copies the picked image into the launcher storage and shows it. */
+    private void saveWallpaper(final Uri uri) {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND);
+                } catch (Exception ignored) {
+                }
+
+                Bitmap bitmap = null;
+                try {
+                    BitmapFactory.Options bounds = new BitmapFactory.Options();
+                    bounds.inJustDecodeBounds = true;
+                    InputStream in = getContentResolver().openInputStream(uri);
+                    BitmapFactory.decodeStream(in, null, bounds);
+                    if (in != null) in.close();
+                    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw new Exception();
+
+                    BitmapFactory.Options opts = new BitmapFactory.Options();
+                    opts.inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight,
+                            MAX_WALLPAPER_SIDE);
+                    in = getContentResolver().openInputStream(uri);
+                    bitmap = BitmapFactory.decodeStream(in, null, opts);
+                    if (in != null) in.close();
+                    if (bitmap == null) throw new Exception();
+
+                    File file = new File(getFilesDir(), "wallpaper.jpg");
+                    FileOutputStream out = new FileOutputStream(file);
+                    try {
+                        bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out);
+                    } finally {
+                        out.close();
+                    }
+                    Prefs.setWallpaper(MainActivity.this, file.getAbsolutePath());
+                } catch (Throwable t) {
+                    if (bitmap != null) bitmap.recycle();
+                    handler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (isFinishing() || isDestroyed()) return;
+                            tracked(new InfoDialog(MainActivity.this,
+                                    Txt.s(MainActivity.this, "Не удалось открыть изображение",
+                                            "Could not open the image"),
+                                    Txt.s(MainActivity.this,
+                                            "Попробуйте другой файл: JPG или PNG.",
+                                            "Try another file: JPG or PNG."))).show();
+                        }
+                    });
+                    return;
+                }
+
+                bitmap.recycle();
+                final Bitmap shown = decodeWallpaperFile(
+                        new File(getFilesDir(), "wallpaper.jpg"), wallpaperMaxSide());
+                handler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (isFinishing() || shown == null) {
+                            if (shown != null) shown.recycle();
+                            return;
+                        }
+                        if (backdrop != null) backdrop.setCustom(shown);
+                    }
+                });
+            }
+        }, "vafic-wallpaper-save").start();
+    }
+
+    /** Half the screen size is plenty for a background behind glass cards. */
+    private int wallpaperMaxSide() {
+        int w = getResources().getDisplayMetrics().widthPixels;
+        int h = getResources().getDisplayMetrics().heightPixels;
+        return Math.max(640, Math.max(w, h) / 2);
+    }
+
+    private static Bitmap decodeWallpaperFile(File file, int maxSide) {
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+
+            BitmapFactory.Options opts = new BitmapFactory.Options();
+            opts.inSampleSize = sampleSize(bounds.outWidth, bounds.outHeight, maxSide);
+            opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
+            return BitmapFactory.decodeFile(file.getAbsolutePath(), opts);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** Largest power of two that keeps the decoded side above maxSide. */
+    private static int sampleSize(int width, int height, int maxSide) {
+        int sample = 1;
+        int longest = Math.max(width, height);
+        while (longest / (sample * 2) >= maxSide) sample *= 2;
+        return sample;
+    }
+
+    private void pickWallpaper() {
+        Intent open = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        open.addCategory(Intent.CATEGORY_OPENABLE);
+        open.setType("image/*");
+        try {
+            startActivityForResult(open, REQ_WALLPAPER);
+            return;
+        } catch (ActivityNotFoundException ignored) {
+        }
+
+        Intent get = new Intent(Intent.ACTION_GET_CONTENT);
+        get.addCategory(Intent.CATEGORY_OPENABLE);
+        get.setType("image/*");
+        try {
+            startActivityForResult(get, REQ_WALLPAPER);
+        } catch (ActivityNotFoundException e) {
+            if (isFinishing()) return;
+            tracked(new InfoDialog(this,
+                    Txt.s(this, "Нет выбора файлов", "No file picker"),
+                    Txt.s(this, "На этом телевизоре нет приложения для выбора изображений.",
+                            "This television has no app for choosing images."))).show();
+        }
+    }
+
+    private final Runnable weatherTick = new Runnable() {
+        @Override
+        public void run() {
+            refreshWeather(true);
+        }
+    };
+
     // ---------------------------------------------------------------- music
+
+    private float musicVolume() {
+        return Prefs.musicVolume(this);
+    }
 
     /**
      * The background track is the full lossless FLAC, shipped as an asset and
@@ -1436,14 +1884,15 @@ public class MainActivity extends Activity {
         if (music == null) return;
         if (musicFade != null) handler.removeCallbacks(musicFade);
         final long start = SystemClock.uptimeMillis();
+        final float target = musicVolume();
         musicFade = new Runnable() {
             @Override
             public void run() {
                 if (music == null) return;
                 float t = Math.min(1f, (SystemClock.uptimeMillis() - start) / 1600f);
-                // The track stays well under the interface sounds: it is a
-                // background, not the main event.
-                float v = MUSIC_VOLUME * t * t * (3f - 2f * t);
+                // The track stays under the interface sounds: it is a
+                // background, not the main event. The level is user-tunable.
+                float v = target * t * t * (3f - 2f * t);
                 try {
                     music.setVolume(v, v);
                 } catch (Exception ignored) {
@@ -1459,10 +1908,6 @@ public class MainActivity extends Activity {
             handler.removeCallbacks(musicFade);
             musicFade = null;
         }
-        if (musicDuck != null) {
-            handler.removeCallbacks(musicDuck);
-            musicDuck = null;
-        }
         try {
             if (music != null && music.isPlaying()) {
                 music.pause();
@@ -1471,38 +1916,24 @@ public class MainActivity extends Activity {
         }
     }
 
-    /**
-     * Dips the background for a moment while the interface talks. The music
-     * comes back half a second after the last sound.
-     */
-    private void duckMusic() {
-        if (music == null || musicFade != null) return;
+    /** Applies a new music level while the track is already playing. */
+    private void applyMusicVolume() {
+        if (music == null) return;
+        if (musicFade != null) {
+            handler.removeCallbacks(musicFade);
+            musicFade = null;
+        }
+        float v = musicVolume();
         try {
-            music.setVolume(MUSIC_VOLUME * 0.35f, MUSIC_VOLUME * 0.35f);
+            music.setVolume(v, v);
         } catch (Exception ignored) {
         }
-        if (musicDuck != null) handler.removeCallbacks(musicDuck);
-        musicDuck = new Runnable() {
-            @Override
-            public void run() {
-                if (music == null) return;
-                try {
-                    music.setVolume(MUSIC_VOLUME, MUSIC_VOLUME);
-                } catch (Exception ignored) {
-                }
-            }
-        };
-        handler.postDelayed(musicDuck, 520);
     }
 
     private void releaseMusic() {
         if (musicFade != null) {
             handler.removeCallbacks(musicFade);
             musicFade = null;
-        }
-        if (musicDuck != null) {
-            handler.removeCallbacks(musicDuck);
-            musicDuck = null;
         }
         try {
             if (music != null) music.release();
@@ -1590,9 +2021,9 @@ public class MainActivity extends Activity {
         if (dt < 28) return;
         lastNavSound = now;
         float rate = dt < 120 ? 1.07f : 0.99f;
-        float volume = dt < 120 ? 0.38f : 0.50f;
+        float level = Prefs.sfxVolume(this);
+        float volume = (dt < 120 ? 0.38f : 0.50f) * level;
         sfx.play(tickSound, volume, volume, 1, 0, rate);
-        duckMusic();
     }
 
     /** Rising glass note: opening a menu, the library or an app. */
@@ -1601,8 +2032,8 @@ public class MainActivity extends Activity {
         long now = SystemClock.uptimeMillis();
         if (now - lastForwardSound < 110) return;
         lastForwardSound = now;
-        sfx.play(forwardSound, 0.36f, 0.36f, 1, 0, 1f);
-        duckMusic();
+        float volume = 0.36f * Prefs.sfxVolume(this);
+        sfx.play(forwardSound, volume, volume, 1, 0, 1f);
     }
 
     /** Falling glass note: back, closing a panel or leaving the library. */
@@ -1611,8 +2042,8 @@ public class MainActivity extends Activity {
         long now = SystemClock.uptimeMillis();
         if (now - lastBackSound < 110) return;
         lastBackSound = now;
-        sfx.play(backSound, 0.34f, 0.34f, 1, 0, 1f);
-        duckMusic();
+        float volume = 0.34f * Prefs.sfxVolume(this);
+        sfx.play(backSound, volume, volume, 1, 0, 1f);
     }
 
     private void copyAsset(String name, File out) throws Exception {
@@ -1654,7 +2085,7 @@ public class MainActivity extends Activity {
                     || code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN
                     || code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER
                     || code == KeyEvent.KEYCODE_BACK;
-            if (!relevant) return super.dispatchKeyEvent(event);
+            if (!relevant) return dispatchToWindow(event);
             if (event.getAction() != KeyEvent.ACTION_DOWN) return true;
 
             if (code == KeyEvent.KEYCODE_BACK) {
@@ -1673,7 +2104,7 @@ public class MainActivity extends Activity {
             boolean relevant = code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT
                     || code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_ENTER
                     || code == KeyEvent.KEYCODE_BACK;
-            if (!relevant) return super.dispatchKeyEvent(event);
+            if (!relevant) return dispatchToWindow(event);
             if (event.getAction() != KeyEvent.ACTION_DOWN) return true;
 
             if (code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_DPAD_CENTER
@@ -1707,7 +2138,7 @@ public class MainActivity extends Activity {
                         return true;
                     }
                 }
-                return super.dispatchKeyEvent(event);
+                return dispatchToWindow(event);
             }
 
             View f = getCurrentFocus();
@@ -1748,7 +2179,17 @@ public class MainActivity extends Activity {
             }
         }
 
-        return super.dispatchKeyEvent(event);
+        return dispatchToWindow(event);
+    }
+
+    /**
+     * Dispatches to the view tree, then moves D-pad focus itself if nothing
+     * handled the event. Doing the move here means ViewRootImpl never reaches
+     * its own focus navigation and never plays the system tick.
+     */
+    private boolean dispatchToWindow(KeyEvent event) {
+        if (super.dispatchKeyEvent(event)) return true;
+        return FocusNav.handle(getWindow() == null ? null : getWindow().getDecorView(), event);
     }
 
     @Override
@@ -1819,6 +2260,9 @@ public class MainActivity extends Activity {
             registerReceiver(notifReceiver, f);
         }
         startMusic();
+        applyWeather();
+        refreshWeather(false);
+        scheduleWeather();
     }
 
     @Override
@@ -1828,6 +2272,7 @@ public class MainActivity extends Activity {
         AppRepo.setPrefetchPaused(true);
         if (ring != null) ring.pause();
         handler.removeCallbacks(sleepAllow);
+        handler.removeCallbacks(weatherTick);
         allowSleep();
         stopMusic();
         if (libraryMoving) cancelLibraryMove();
@@ -1876,6 +2321,15 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_WALLPAPER && resultCode == RESULT_OK && data != null) {
+            Uri uri = data.getData();
+            if (uri != null) saveWallpaper(uri);
+        }
+    }
+
+    @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
         releaseMusic();
@@ -1907,4 +2361,3 @@ public class MainActivity extends Activity {
         if (ring != null) ring.hide();
     }
 }
-

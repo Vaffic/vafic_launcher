@@ -22,4 +22,19 @@ public final class Ui {
     public static boolean fast() {
         return SystemClock.uptimeMillis() < fastUntil;
     }
+
+    /**
+     * Turns off the framework's click sound for a whole window. The launcher
+     * plays its own ticks and notes, so a second system click is unwanted.
+     */
+    static void disableSystemClicks(android.view.View view) {
+        if (view == null) return;
+        view.setSoundEffectsEnabled(false);
+        if (view instanceof android.view.ViewGroup) {
+            android.view.ViewGroup group = (android.view.ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                disableSystemClicks(group.getChildAt(i));
+            }
+        }
+    }
 }

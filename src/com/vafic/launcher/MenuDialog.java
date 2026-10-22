@@ -20,7 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /** Dark liquid-glass alert: a title plus a short list of focusable items. */
-public class MenuDialog extends Dialog {
+public class MenuDialog extends VaficDialog {
 
     public interface Listener {
         void onItem(int index);

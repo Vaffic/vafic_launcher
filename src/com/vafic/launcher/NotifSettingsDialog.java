@@ -25,7 +25,7 @@ import java.util.Set;
  * Per-app notification filter. Shows launchable apps by default; a fixed switch
  * reveals every installed package, including system and hidden apps.
  */
-public class NotifSettingsDialog extends Dialog {
+public class NotifSettingsDialog extends VaficDialog {
 
     private static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT;
     private static final int WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;

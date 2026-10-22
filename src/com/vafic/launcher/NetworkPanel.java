@@ -18,7 +18,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 /** Dark glass network card: connection type, signal, IP and a shortcut to system Wi-Fi settings. */
-public class NetworkPanel extends Dialog {
+public class NetworkPanel extends VaficDialog {
 
     private static final int MATCH = ViewGroup.LayoutParams.MATCH_PARENT;
     private static final int WRAP = ViewGroup.LayoutParams.WRAP_CONTENT;
