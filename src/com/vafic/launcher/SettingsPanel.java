@@ -274,6 +274,8 @@ public class SettingsPanel extends VaficDialog {
         int n = Prefs.dockSize(activity);
         String size = DockSettingsDialog.sizeName(activity,
                 DockSettingsDialog.levelFor(activity));
+        String suffix = Prefs.dockLabels(activity)
+                ? "" : Txt.s(activity, " · без названий", " · no names");
         if (Txt.russian(activity)) {
             int mod10 = n % 10;
             int mod100 = n % 100;
@@ -281,9 +283,9 @@ public class SettingsPanel extends VaficDialog {
             if (mod10 == 1 && mod100 != 11) word = "приложение";
             else if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) word = "приложения";
             else word = "приложений";
-            return size + " · " + n + " " + word;
+            return size + " · " + n + " " + word + suffix;
         }
-        return size + " · " + n + (n == 1 ? " app" : " apps");
+        return size + " · " + n + (n == 1 ? " app" : " apps") + suffix;
     }
 
     private String wallpaperSummary() {

@@ -3,6 +3,7 @@ package com.vafic.launcher;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.graphics.drawable.Drawable;
@@ -55,6 +56,68 @@ public final class AppRepo {
 
     public static boolean isLaunchable(Context c, String pkg) {
         return c.getPackageManager().getLaunchIntentForPackage(pkg) != null;
+    }
+
+    /** True while the package is installed, even if it has no launcher activity. */
+    public static boolean isInstalled(Context c, String pkg) {
+        if (pkg == null || pkg.trim().isEmpty()) return false;
+        try {
+            c.getPackageManager().getApplicationInfo(pkg, 0);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** A cached app icon, without decoding the wide banner as well. */
+    public static Drawable icon(Context c, String pkg) {
+        return cachedIcon(c, pkg);
+    }
+
+    /** Drops artwork for one package after an update or uninstall. */
+    public static void invalidate(String pkg) {
+        if (pkg == null) return;
+        synchronized (ART_LOCK) {
+            ICONS.remove(pkg);
+            BANNERS.remove(pkg);
+        }
+    }
+
+    /** Drops every decoded icon and banner; used when several packages changed at once. */
+    public static void invalidateAll() {
+        synchronized (ART_LOCK) {
+            ICONS.clear();
+            BANNERS.clear();
+        }
+    }
+
+    /**
+     * A stable fingerprint of the launchable apps and their update times. The
+     * launcher compares it on resume, so an install that happened while the
+     * package receiver was unregistered is not missed.
+     */
+    public static String installedSignature(Context c) {
+        PackageManager pm = c.getPackageManager();
+        Set<String> seen = new HashSet<>();
+        List<String> parts = new ArrayList<>();
+        for (ResolveInfo ri : launchables(pm)) {
+            String pkg = ri.activityInfo == null ? null : ri.activityInfo.packageName;
+            if (pkg == null || pkg.equals(c.getPackageName()) || !seen.add(pkg)) continue;
+            long updated = 0L;
+            try {
+                PackageInfo pi = pm.getPackageInfo(pkg, 0);
+                updated = pi.lastUpdateTime;
+            } catch (Exception ignored) {
+            }
+            parts.add(pkg + ":" + updated);
+        }
+        Collections.sort(parts);
+        StringBuilder b = new StringBuilder();
+        for (String part : parts) {
+            if (b.length() > 0) b.append(',');
+            b.append(part);
+        }
+        return b.toString();
     }
 
     public static App resolve(Context c, String pkg, String fallbackLabel) {

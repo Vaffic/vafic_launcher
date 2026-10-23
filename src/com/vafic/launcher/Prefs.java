@@ -29,6 +29,7 @@ public final class Prefs {
     private static final String KEY_BLOCKED = "blocked_notifications";
     private static final String KEY_HIDDEN = "hidden_apps";
     private static final String KEY_DOCK_SIZE = "dock_size";
+    private static final String KEY_DOCK_LABELS = "dock_labels";
     private static final String KEY_WEATHER = "weather";
     private static final String KEY_WEATHER_FORECAST = "weather_forecast";
     private static final String KEY_WEATHER_CITY = "weather_city";
@@ -164,6 +165,15 @@ public final class Prefs {
         sp(c).edit().putInt(KEY_DOCK_SIZE, value).apply();
         List<String> cur = home(c);
         save(c, cur);
+    }
+
+    /** Whether the app names are drawn under the dock cards. */
+    public static boolean dockLabels(Context c) {
+        return sp(c).getBoolean(KEY_DOCK_LABELS, true);
+    }
+
+    public static void setDockLabels(Context c, boolean on) {
+        sp(c).edit().putBoolean(KEY_DOCK_LABELS, on).apply();
     }
 
     // ---- weather ----
@@ -363,5 +373,35 @@ public final class Prefs {
 
     public static void clearHidden(Context c) {
         sp(c).edit().remove(KEY_HIDDEN).apply();
+    }
+
+    /** Every package remembered in the app lists, for cleaning up after uninstalls. */
+    public static Set<String> knownPackages(Context c) {
+        Set<String> out = new HashSet<>();
+        out.addAll(home(c));
+        out.addAll(libraryOrder(c));
+        out.addAll(hidden(c));
+        out.addAll(blocked(c));
+        return out;
+    }
+
+    /**
+     * Forgets every preference tied to an uninstalled package. The next install
+     * of the same package starts clean instead of inheriting a stale dock slot,
+     * library position or notification block.
+     */
+    public static void forget(Context c, String pkg) {
+        if (pkg == null || pkg.trim().isEmpty()) return;
+        List<String> dock = home(c);
+        if (dock.remove(pkg)) save(c, dock);
+
+        List<String> order = libraryOrder(c);
+        if (order.remove(pkg)) saveLibraryOrder(c, order);
+
+        Set<String> hidden = hidden(c);
+        if (hidden.remove(pkg)) saveHidden(c, hidden);
+
+        Set<String> blocked = blocked(c);
+        if (blocked.remove(pkg)) saveBlocked(c, blocked);
     }
 }

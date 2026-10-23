@@ -11,6 +11,7 @@ import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.media.AudioAttributes;
 import android.media.MediaPlayer;
@@ -30,9 +31,11 @@ import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.Window;
 import android.view.WindowManager;
+import android.view.animation.AccelerateInterpolator;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 import android.widget.GridLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -42,8 +45,10 @@ import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * tvOS-style home: clock, status cluster, a dock of up to five apps (or one
@@ -66,6 +71,12 @@ public class MainActivity extends Activity {
 
     /** Request code for the system image picker. */
     private static final int REQ_WALLPAPER = 77;
+
+    /** Package broadcasts arrive in bursts; one delayed rebuild covers the whole burst. */
+    private static final long PACKAGE_REFRESH_DELAY_MS = 450L;
+
+    /** How long a heads-up banner stays on screen before sliding back up. */
+    private static final long BANNER_VISIBLE_MS = 4200L;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private SimpleDateFormat timeFmt;
@@ -111,6 +122,14 @@ public class MainActivity extends Activity {
     private String libraryMovePkg;
     private boolean libraryMoving;
     private String renderedKey;
+    private String installedSignature;
+    private boolean packageReceiverRegistered;
+    private final Set<String> changedPackages = new HashSet<>();
+
+    private FrameLayout bannerLayer;
+    private View bannerView;
+    private final List<Banner> bannerQueue = new ArrayList<>();
+    private boolean bannerShowing;
 
     private boolean pageAnimating;
     private boolean pageAnimOpening;
@@ -152,7 +171,75 @@ public class MainActivity extends Activity {
     private final BroadcastReceiver notifReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent i) {
+            if (i != null && NotifListener.ACTION_HEADS_UP.equals(i.getAction())) {
+                enqueueBanner(i);
+            }
             if (statusBar != null) statusBar.refresh();
+        }
+    };
+
+    /**
+     * Package installs, updates and uninstalls arrive as a short burst of
+     * broadcasts. The UI is rebuilt once, after the burst has settled.
+     */
+    private final BroadcastReceiver packageReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context c, Intent i) {
+            if (i == null) return;
+            String pkg = i.getData() == null ? null : i.getData().getSchemeSpecificPart();
+            synchronized (changedPackages) {
+                changedPackages.add(pkg == null ? "" : pkg);
+            }
+            handler.removeCallbacks(packageRefresh);
+            handler.postDelayed(packageRefresh, PACKAGE_REFRESH_DELAY_MS);
+        }
+    };
+
+    private final Runnable packageRefresh = new Runnable() {
+        @Override
+        public void run() {
+            if (isFinishing()) return;
+            Set<String> changed;
+            synchronized (changedPackages) {
+                changed = new HashSet<>(changedPackages);
+                changedPackages.clear();
+            }
+            boolean all = changed.isEmpty();
+            for (String pkg : changed) {
+                if (pkg == null || pkg.isEmpty()) all = true;
+                else AppRepo.invalidate(pkg);
+            }
+            if (all) AppRepo.invalidateAll();
+            refreshAppsNow();
+        }
+    };
+
+    private final Runnable hideBanner = new Runnable() {
+        @Override
+        public void run() {
+            if (bannerView == null) {
+                bannerShowing = false;
+                return;
+            }
+            final View v = bannerView;
+            v.animate().translationY(-dp(200)).alpha(0f).setDuration(240)
+                    .setInterpolator(new AccelerateInterpolator())
+                    .withEndAction(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (bannerLayer != null) bannerLayer.removeView(v);
+                            if (bannerView == v) bannerView = null;
+                            bannerShowing = false;
+                            if (!bannerQueue.isEmpty()) handler.postDelayed(nextBanner, 160);
+                        }
+                    }).start();
+        }
+    };
+
+    private final Runnable nextBanner = new Runnable() {
+        @Override
+        public void run() {
+            showNextBanner();
         }
     };
 
@@ -224,6 +311,17 @@ public class MainActivity extends Activity {
         // The ring is a small view that rides on the focused card. It only
         // needs to be as big as the biggest card plus the room for the glow.
         root.addView(ring, new FrameLayout.LayoutParams(dp(180), dp(112)));
+
+        // Heads-up banners live above the ring and both pages. The layer never
+        // takes focus or touches, so D-pad navigation continues underneath it.
+        bannerLayer = new FrameLayout(this);
+        bannerLayer.setClipChildren(false);
+        bannerLayer.setClipToPadding(false);
+        bannerLayer.setFocusable(false);
+        bannerLayer.setClickable(false);
+        bannerLayer.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        bannerLayer.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        root.addView(bannerLayer, new FrameLayout.LayoutParams(MATCH, MATCH));
 
         root.getViewTreeObserver().addOnGlobalFocusChangeListener(
                 new ViewTreeObserver.OnGlobalFocusChangeListener() {
@@ -409,14 +507,21 @@ public class MainActivity extends Activity {
 
     private void renderDock(boolean cascade) {
         int focused = -1;
+        String focusedPkg = null;
         View f = dockRow.findFocus();
-        if (f != null) focused = dockRow.indexOfChild(f);
+        if (f != null) {
+            focused = dockRow.indexOfChild(f);
+            if (f.getTag() instanceof String) focusedPkg = (String) f.getTag();
+        }
 
         dockRow.removeAllViews();
         List<AppRepo.App> apps = AppRepo.homeApps(this);
         int capacity = Prefs.dockSize(this);
+        boolean showLabels = Prefs.dockLabels(this);
         int tileDp = dockTileWidth(capacity);
-        int tileHdp = Math.round(tileDp * 82f / 146f);
+        // Hiding the captions frees vertical space; make the cards taller so
+        // the artwork fills it instead of leaving a sparse dock.
+        int tileHdp = Math.round(tileDp * (showLabels ? 82f : 96f) / 146f);
         int labelSp = Math.max(8, Math.min(14, Math.round(12f * tileDp / 146f)));
         int corner = Math.max(12, Math.min(24, Math.round(20f * tileDp / 146f)));
         int gap = capacity >= 7 ? dp(8) : dp(12);
@@ -425,7 +530,8 @@ public class MainActivity extends Activity {
         dockRow.setPadding(padH, padV, padH, padV);
 
         if (apps.isEmpty()) {
-            TileView add = tile(Txt.s(this, "Добавить", "Add apps"), tileDp, tileHdp, labelSp, corner);
+            TileView add = tile(Txt.s(this, "Добавить", "Add apps"), tileDp, tileHdp,
+                    labelSp, corner, showLabels);
             add.setGlyph("+", Math.max(22, Math.round(34f * tileDp / 146f)));
             add.setOnClickListener(new View.OnClickListener() {
                 @Override
@@ -438,8 +544,9 @@ public class MainActivity extends Activity {
         for (int i = 0; i < apps.size(); i++) {
             final AppRepo.App a = apps.get(i);
             final int pos = i;
-            final TileView v = tile(a.label, tileDp, tileHdp, labelSp, corner);
-            bindArt(v, a, true);
+            final TileView v = tile(a.label, tileDp, tileHdp, labelSp, corner, showLabels);
+            v.setTag(a.pkg);
+            bindDockArt(v, a, showLabels);
             v.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View view) {
@@ -475,10 +582,55 @@ public class MainActivity extends Activity {
             }
         }
 
-        if (focused >= 0) {
-            focusDock(focused);
+        int restore = focused;
+        if (focusedPkg != null) {
+            int byPkg = dockIndexOf(focusedPkg);
+            if (byPkg >= 0) restore = byPkg;
+        }
+        if (restore >= 0) {
+            focusDock(restore);
         } else if (first) {
             focusDock(0);
+        }
+    }
+
+    /** Index of a dock card by package, or -1 when it is not on the dock. */
+    private int dockIndexOf(String pkg) {
+        if (pkg == null || dockRow == null) return -1;
+        for (int i = 0; i < dockRow.getChildCount(); i++) {
+            Object tag = dockRow.getChildAt(i).getTag();
+            if (tag instanceof String && pkg.equals(tag)) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * Rebuilds the dock and the library after a package change. The app that
+     * had focus is kept when it still exists; otherwise the cursor lands on
+     * the card that took its place in the library.
+     */
+    private void refreshAppsNow() {
+        if (isFinishing() || isDestroyed()) return;
+        cleanMissingApps();
+        installedSignature = AppRepo.installedSignature(this);
+
+        String focusedLib = lastLibPkg;
+        int focusedLibIndex = libraryIndexOf(focusedLib);
+        renderDock(false);
+        if (libraryBuilt) renderLibrary();
+
+        if (libraryOpen) {
+            if (gridTile(focusedLib) != null) focusLibrary(focusedLib);
+            else focusLibraryIndex(focusedLibIndex);
+        } else if (homePage != null && homePage.findFocus() == null) {
+            focusDock(dockIndex);
+        }
+    }
+
+    /** Drops prefs for packages that were uninstalled while the receiver was off. */
+    private void cleanMissingApps() {
+        for (String pkg : Prefs.knownPackages(this)) {
+            if (!AppRepo.isInstalled(this, pkg)) Prefs.forget(this, pkg);
         }
     }
 
@@ -1066,10 +1218,15 @@ public class MainActivity extends Activity {
         tracked(new MenuDialog(this, a.label,
                 new String[]{Txt.s(this, "Переместить", "Move"),
                         Txt.s(this, "Убрать с дока", "Remove from dock"),
-                        Txt.s(this, "Скрыть", "Hide")},
+                        Txt.s(this, "Скрыть", "Hide"),
+                        Txt.s(this, "Удалить", "Delete")},
                 new MenuDialog.Listener() {
                     @Override
                     public void onItem(int which) {
+                        if (which == 3) {
+                            deleteApp(a);
+                            return;
+                        }
                         if (which == 2) {
                             hideApp(a);
                             return;
@@ -1092,14 +1249,20 @@ public class MainActivity extends Activity {
         String[] items = onDock
                 ? new String[]{Txt.s(this, "Убрать с дока", "Remove from dock"),
                         Txt.s(this, "Переместить", "Move"),
-                        Txt.s(this, "Скрыть", "Hide")}
+                        Txt.s(this, "Скрыть", "Hide"),
+                        Txt.s(this, "Удалить", "Delete")}
                 : new String[]{Txt.s(this, "Добавить на док", "Add to dock"),
                         Txt.s(this, "Переместить", "Move"),
-                        Txt.s(this, "Скрыть", "Hide")};
+                        Txt.s(this, "Скрыть", "Hide"),
+                        Txt.s(this, "Удалить", "Delete")};
         ring.hide();
         tracked(new MenuDialog(this, a.label, items, new MenuDialog.Listener() {
             @Override
             public void onItem(int which) {
+                if (which == 3) {
+                    deleteApp(a);
+                    return;
+                }
                 if (which == 2) {
                     hideApp(a);
                     return;
@@ -1126,6 +1289,25 @@ public class MainActivity extends Activity {
                 }
             }
         })).show();
+    }
+
+    /**
+     * Opens the system uninstall screen. The package receiver rebuilds the
+     * dock and library when the package is actually gone; cancelling the
+     * system dialog leaves everything untouched.
+     */
+    private void deleteApp(AppRepo.App a) {
+        if (a == null || isFinishing()) return;
+        playForward();
+        try {
+            startActivity(new Intent(Intent.ACTION_DELETE, Uri.parse("package:" + a.pkg)));
+        } catch (Exception e) {
+            if (isFinishing()) return;
+            tracked(new InfoDialog(this,
+                    Txt.s(this, "Не удалось удалить", "Could not uninstall"),
+                    Txt.s(this, "На этом телевизоре нет системного окна удаления приложений.",
+                            "This television has no system uninstall screen."))).show();
+        }
     }
 
     /**
@@ -1283,6 +1465,141 @@ public class MainActivity extends Activity {
         }
     }
 
+    // ------------------------------------------------------------ heads-up
+
+    private void enqueueBanner(Intent i) {
+        if (i == null || bannerLayer == null) return;
+        String pkg = i.getStringExtra(NotifListener.EXTRA_PKG);
+        if (TextUtils.isEmpty(pkg)) return;
+        if (bannerQueue.size() >= 4) bannerQueue.remove(0);
+        bannerQueue.add(new Banner(pkg,
+                i.getStringExtra(NotifListener.EXTRA_APP),
+                i.getStringExtra(NotifListener.EXTRA_TITLE),
+                i.getStringExtra(NotifListener.EXTRA_TEXT)));
+        showNextBanner();
+    }
+
+    /** Shows the next queued popup, unless one is already sliding. */
+    private void showNextBanner() {
+        if (bannerShowing || bannerQueue.isEmpty() || isFinishing() || bannerLayer == null) return;
+        Banner b = bannerQueue.remove(0);
+        bannerShowing = true;
+
+        final View v = buildBannerView(b);
+        bannerView = v;
+        int screenW = getResources().getDisplayMetrics().widthPixels;
+        int width = Math.min(dp(680), Math.max(dp(320), screenW - dp(96)));
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(width, WRAP,
+                Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        lp.topMargin = dp(22);
+        v.setAlpha(0f);
+        v.setTranslationY(-dp(200));
+        bannerLayer.addView(v, lp);
+
+        v.post(new Runnable() {
+            @Override
+            public void run() {
+                if (bannerView != v) return;
+                v.animate().translationY(0f).alpha(1f).setDuration(280)
+                        .setInterpolator(new DecelerateInterpolator()).start();
+            }
+        });
+
+        handler.removeCallbacks(hideBanner);
+        handler.postDelayed(hideBanner, BANNER_VISIBLE_MS);
+    }
+
+    private View buildBannerView(Banner b) {
+        GlassPanel panel = new GlassPanel(this, density, 22);
+        panel.setFocusable(false);
+        panel.setClickable(false);
+        panel.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        panel.setElevation(dp(40));
+        panel.setClipChildren(false);
+        panel.setClipToPadding(false);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(18), dp(14), dp(20), dp(14));
+
+        ImageView icon = new ImageView(this);
+        Drawable art = AppRepo.icon(this, b.pkg);
+        if (art == null) art = getPackageManager().getDefaultActivityIcon();
+        icon.setImageDrawable(art);
+        row.addView(icon, new LinearLayout.LayoutParams(dp(42), dp(42)));
+
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(dp(14), 0, 0, 0);
+
+        String app = TextUtils.isEmpty(b.app) ? b.pkg : b.app;
+        String heading = TextUtils.isEmpty(b.title) ? app : b.title;
+
+        TextView appView = new TextView(this);
+        appView.setText(app);
+        appView.setTextSize(11);
+        appView.setTextColor(0x8AFFFFFF);
+        appView.setLetterSpacing(0.06f);
+        appView.setSingleLine(true);
+        appView.setEllipsize(TextUtils.TruncateAt.END);
+        col.addView(appView, new LinearLayout.LayoutParams(MATCH, WRAP));
+
+        TextView title = new TextView(this);
+        title.setText(heading);
+        title.setTextSize(17);
+        title.setTextColor(0xFFF5F5F7);
+        title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        title.setSingleLine(true);
+        title.setEllipsize(TextUtils.TruncateAt.END);
+        col.addView(title, new LinearLayout.LayoutParams(MATCH, WRAP));
+
+        if (!TextUtils.isEmpty(b.text)) {
+            TextView text = new TextView(this);
+            text.setText(b.text);
+            text.setTextSize(13);
+            text.setTextColor(0xB3FFFFFF);
+            text.setMaxLines(2);
+            text.setEllipsize(TextUtils.TruncateAt.END);
+            text.setPadding(0, dp(2), 0, 0);
+            col.addView(text, new LinearLayout.LayoutParams(MATCH, WRAP));
+        }
+
+        row.addView(col, new LinearLayout.LayoutParams(0, WRAP, 1f));
+        panel.addView(row, new FrameLayout.LayoutParams(MATCH, WRAP));
+        String body = b.text == null ? "" : b.text;
+        panel.setContentDescription((app + " " + heading + " " + body).trim());
+        return panel;
+    }
+
+    /** Removes a banner immediately, used when the activity leaves the screen. */
+    private void clearBanners() {
+        handler.removeCallbacks(hideBanner);
+        handler.removeCallbacks(nextBanner);
+        bannerQueue.clear();
+        View v = bannerView;
+        bannerView = null;
+        bannerShowing = false;
+        if (v != null) {
+            v.animate().cancel();
+            if (bannerLayer != null) bannerLayer.removeView(v);
+        }
+    }
+
+    private static final class Banner {
+        final String pkg;
+        final String app;
+        final String title;
+        final String text;
+
+        Banner(String pkg, String app, String title, String text) {
+            this.pkg = pkg;
+            this.app = app;
+            this.title = title;
+            this.text = text;
+        }
+    }
+
     private void showNetwork() {
         if (isFinishing()) return;
         playForward();
@@ -1388,6 +1705,11 @@ public class MainActivity extends Activity {
             public void onDockChanged(int count) {
                 renderDock(false);
                 focusDock(Math.min(dockIndex, Math.max(0, dockRow.getChildCount() - 1)));
+            }
+
+            @Override
+            public void onDockLabelsChanged(boolean shown) {
+                renderDock(false);
             }
         })).show();
     }
@@ -1500,13 +1822,27 @@ public class MainActivity extends Activity {
     }
 
     private TileView tile(String label, int wDp, int hDp, int labelSp, int cornerDp) {
-        TileView v = new TileView(this, dp(wDp), dp(hDp), labelSp, cornerDp, true);
+        return tile(label, wDp, hDp, labelSp, cornerDp, true);
+    }
+
+    private TileView tile(String label, int wDp, int hDp, int labelSp, int cornerDp,
+                          boolean withLabel) {
+        TileView v = new TileView(this, dp(wDp), dp(hDp), labelSp, cornerDp, withLabel);
         v.setLabel(label);
         return v;
     }
 
     private void bindArt(TileView v, AppRepo.App a) {
         bindArt(v, a, false);
+    }
+
+    /** Dock artwork with a tighter frame when the captions are hidden. */
+    private void bindDockArt(TileView v, AppRepo.App a, boolean showLabels) {
+        if (a.banner != null) {
+            v.setBanner(a.banner);
+        } else {
+            v.setIcon(a.icon, showLabels ? 14 : 12, showLabels ? 9 : 7);
+        }
     }
 
     /**
@@ -2254,10 +2590,33 @@ public class MainActivity extends Activity {
         AppRepo.setPrefetchPaused(false);
         if (ring != null) ring.resume();
         IntentFilter f = new IntentFilter(NotifListener.ACTION);
+        f.addAction(NotifListener.ACTION_HEADS_UP);
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(notifReceiver, f, Context.RECEIVER_NOT_EXPORTED);
         } else {
             registerReceiver(notifReceiver, f);
+        }
+
+        // Package broadcasts come from the system, so this receiver is
+        // exported on Android 13+. It only schedules a refresh; it never
+        // trusts the broadcast as proof that a package actually changed.
+        if (!packageReceiverRegistered) {
+            IntentFilter pf = new IntentFilter();
+            pf.addAction(Intent.ACTION_PACKAGE_ADDED);
+            pf.addAction(Intent.ACTION_PACKAGE_REMOVED);
+            pf.addAction(Intent.ACTION_PACKAGE_FULLY_REMOVED);
+            pf.addAction(Intent.ACTION_PACKAGE_REPLACED);
+            pf.addAction(Intent.ACTION_PACKAGE_CHANGED);
+            pf.addDataScheme("package");
+            try {
+                if (Build.VERSION.SDK_INT >= 33) {
+                    registerReceiver(packageReceiver, pf, Context.RECEIVER_EXPORTED);
+                } else {
+                    registerReceiver(packageReceiver, pf);
+                }
+                packageReceiverRegistered = true;
+            } catch (Exception ignored) {
+            }
         }
         startMusic();
         applyWeather();
@@ -2277,10 +2636,22 @@ public class MainActivity extends Activity {
         stopMusic();
         if (libraryMoving) cancelLibraryMove();
         hideLibraryNoticeNow();
+        clearBanners();
+        handler.removeCallbacks(packageRefresh);
+        synchronized (changedPackages) {
+            changedPackages.clear();
+        }
         if (ring != null) ring.hide();
         try {
             unregisterReceiver(notifReceiver);
         } catch (Exception ignored) {
+        }
+        if (packageReceiverRegistered) {
+            try {
+                unregisterReceiver(packageReceiver);
+            } catch (Exception ignored) {
+            }
+            packageReceiverRegistered = false;
         }
         super.onStop();
     }
@@ -2298,14 +2669,28 @@ public class MainActivity extends Activity {
         }
 
         String key = TextUtils.join(",", Prefs.home(this));
-        if (renderedKey != null && !renderedKey.equals(key)) {
-            renderDock(false);
-            if (libraryBuilt) renderLibrary();
-            if (libraryOpen) focusLibrary();
-            else focusDock(dockIndex);
+        boolean needRender = renderedKey != null && !renderedKey.equals(key);
+
+        String sig = AppRepo.installedSignature(this);
+        if (installedSignature == null) {
+            installedSignature = sig;
+        } else if (!installedSignature.equals(sig)) {
+            installedSignature = sig;
+            AppRepo.invalidateAll();
+            cleanMissingApps();
+            needRender = true;
+        }
+
+        if (needRender) {
+            refreshAppsNow();
         } else if (!libraryOpen && dockRow.getChildCount() > 0
                 && homePage != null && homePage.findFocus() == null) {
             focusDock(dockIndex);
+        } else if (libraryOpen && dialogs.isEmpty()) {
+            View f = getCurrentFocus();
+            if (!(f instanceof TileView) || grid == null || grid.indexOfChild(f) < 0) {
+                focusLibrary();
+            }
         }
 
         if (!Prefs.music(this)) stopMusic();
@@ -2331,6 +2716,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        clearBanners();
         handler.removeCallbacksAndMessages(null);
         releaseMusic();
         if (sfx != null) {
@@ -2357,6 +2743,10 @@ public class MainActivity extends Activity {
         // send the cursor to a random place.
         if (!libraryOpen && homePage != null && homePage.findFocus() == null) {
             focusDock(dockIndex);
+        } else if (libraryOpen && dialogs.isEmpty()) {
+            if (!(f instanceof TileView) || grid == null || grid.indexOfChild(f) < 0) {
+                focusLibrary();
+            }
         }
         if (ring != null) ring.hide();
     }

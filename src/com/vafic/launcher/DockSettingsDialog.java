@@ -19,16 +19,18 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 /**
- * Dock section: the user picks the size of the dock cards. The size directly
- * sets how many apps fit: the smallest cards hold eight apps, the largest
- * three. The slider never grows past the point where the current dock apps
- * would stop fitting; an attempt shows a warning instead of silently dropping
- * the last app.
+ * Dock section: the user picks the size of the dock cards and whether the app
+ * names are shown below them. The size directly sets how many apps fit: the
+ * smallest cards hold eight apps, the largest three. The slider never grows
+ * past the point where the current dock apps would stop fitting; an attempt
+ * shows a warning instead of silently dropping the last app.
  */
 public class DockSettingsDialog extends VaficDialog {
 
     public interface Listener {
         void onDockChanged(int count);
+
+        void onDockLabelsChanged(boolean shown);
     }
 
     /** Slider levels from the smallest card (level 0, 8 apps) to the largest. */
@@ -48,6 +50,7 @@ public class DockSettingsDialog extends VaficDialog {
     private final float density;
     private final FrameLayout card;
     private final View firstRow;
+    private final TextView labelsValue;
     private final TextView note;
     private long lastLimitToast;
 
@@ -75,15 +78,15 @@ public class DockSettingsDialog extends VaficDialog {
         card.addView(box, new FrameLayout.LayoutParams(MATCH, WRAP));
 
         TextView title = new TextView(a);
-        title.setText(Txt.s(a, "Размер дока", "Dock size"));
+        title.setText(Txt.s(a, "Док", "Dock"));
         title.setTextSize(23);
         title.setTextColor(0xFFFFFFFF);
         title.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         box.addView(title, new LinearLayout.LayoutParams(MATCH, WRAP));
 
         TextView sub = new TextView(a);
-        sub.setText(Txt.s(a, "Размер карточек внизу экрана",
-                "The size of the cards at the bottom of the screen"));
+        sub.setText(Txt.s(a, "Размер карточек и подписи внизу экрана",
+                "Card size and captions at the bottom of the screen"));
         sub.setTextSize(12);
         sub.setTextColor(0x59FFFFFF);
         sub.setPadding(0, dp(2), 0, dp(12));
@@ -118,6 +121,22 @@ public class DockSettingsDialog extends VaficDialog {
         firstRow = size;
         box.addView(size, new LinearLayout.LayoutParams(MATCH, WRAP));
 
+        LinearLayout labels = row(Txt.s(a, "Названия приложений", "App names"));
+        labelsValue = (TextView) labels.getChildAt(1);
+        labels.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                boolean shown = !Prefs.dockLabels(activity);
+                Prefs.setDockLabels(activity, shown);
+                updateLabelsValue(shown);
+                listener.onDockLabelsChanged(shown);
+            }
+        });
+        LinearLayout.LayoutParams llp = new LinearLayout.LayoutParams(MATCH, WRAP);
+        llp.topMargin = dp(10);
+        box.addView(labels, llp);
+        updateLabelsValue(Prefs.dockLabels(a));
+
         note = new TextView(a);
         note.setTextSize(12);
         note.setTextColor(0x66FFFFFF);
@@ -127,8 +146,8 @@ public class DockSettingsDialog extends VaficDialog {
         updateNote(level);
 
         TextView foot = new TextView(a);
-        foot.setText(Txt.s(a, "\u2190 \u2192 — размер      •      BACK — назад",
-                "\u2190 \u2192 — size      •      BACK — back"));
+        foot.setText(Txt.s(a, "\u2190 \u2192 — размер      •      OK — названия      •      BACK — назад",
+                "\u2190 \u2192 — size      •      OK — names      •      BACK — back"));
         foot.setTextSize(12);
         foot.setTextColor(0x4DFFFFFF);
         foot.setGravity(Gravity.CENTER);
@@ -180,6 +199,39 @@ public class DockSettingsDialog extends VaficDialog {
             return n + " приложения";
         }
         return n + " приложений";
+    }
+
+    /** A focusable settings row with a value on the right. */
+    private LinearLayout row(String label) {
+        LinearLayout r = new LinearLayout(activity);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(dp(16), dp(7), dp(16), dp(7));
+        r.setMinimumHeight(dp(46));
+        r.setFocusable(true);
+        r.setFocusableInTouchMode(false);
+        r.setClickable(true);
+        r.setBackground(Styles.row(density, 16));
+        r.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+
+        TextView name = new TextView(activity);
+        name.setText(label);
+        name.setTextSize(15.5f);
+        name.setTextColor(0xFFF5F5F7);
+        r.addView(name, new LinearLayout.LayoutParams(0, WRAP, 1f));
+
+        TextView value = new TextView(activity);
+        value.setTextSize(13);
+        value.setPadding(dp(12), 0, 0, 0);
+        r.addView(value, new LinearLayout.LayoutParams(WRAP, WRAP));
+        return r;
+    }
+
+    private void updateLabelsValue(boolean shown) {
+        if (labelsValue == null) return;
+        labelsValue.setText(Txt.s(activity, shown ? "Вкл" : "Выкл",
+                shown ? "On" : "Off"));
+        labelsValue.setTextColor(shown ? 0xFF8FE3A4 : 0x8AFFFFFF);
     }
 
     private void warnLimit() {
