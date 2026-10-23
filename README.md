@@ -2,10 +2,10 @@
 
 A quiet, controller-first home screen for Android TV. Three full rows, a fixed
 header, a resizable dock of three to eight apps, optional weather and a short
-forecast next to the clock, a reorderable library with hidden apps, a PS5-style
-focus outline and Windows-Aero glass surfaces — built without AndroidX or
-Gradle. A small aapt2 resource step localizes the app name to English and
-Russian.
+forecast next to the clock, a live-updating library with hidden apps and
+in-app deletion, a PS5-style focus outline and Windows-Aero glass surfaces —
+built without AndroidX or Gradle. A small aapt2 resource step localizes the app
+name to English and Russian.
 
 [Русская версия](README.ru.md)
 
@@ -51,6 +51,15 @@ More screenshots, including the app menu and network panel, are in
 - **Hidden apps.** Long-press an app and choose **Hide**: it leaves the library
   and the dock. The launcher settings keep a **Hidden apps** list where every
   hidden app can be restored, or all of them at once.
+- **Delete an app.** The same long-press menu has **Delete**, which opens the
+  television's system uninstall confirmation. After the package is removed, the
+  app disappears from the dock and the library and its saved position, hidden
+  state and notification filter entry are dropped.
+- **Live library.** Installs, updates and uninstalls are picked up while the
+  launcher is open, without leaving the screen or restarting it. If a package
+  changes while another app is in front, the launcher refreshes when it becomes
+  visible again. Removed apps also leave the dock, the hidden-apps list and the
+  notification filter.
 - **Focus-centred library.** Five columns, three full rows, labels always
   visible. Moving past the middle row glides the page by exactly one row.
   During the glide the focus outline rides the selected card, then continues to
@@ -60,10 +69,12 @@ More screenshots, including the app menu and network panel, are in
   apps stay alphabetical at the end.
 - **PS5-style focus.** A thin border hugs the card with a soft pearl-white
   gradient travelling around it. The outline is drawn above the glass layers.
-- **Dock editing.** Long-press OK on a dock card to move, remove or hide it.
-  Long-press OK in the library to add/remove an app from the dock, move it in
-  the library or hide it. The dock holds three to eight apps; the **Dock size**
-  setting scales the cards and directly sets how many apps fit.
+- **Dock editing.** Long-press OK on a dock card to move, remove, hide or delete
+  it. Long-press OK in the library to add/remove an app from the dock, move it
+  in the library, hide it or delete it. The dock holds three to eight apps; the
+  **Dock** settings scale the cards, directly set how many apps fit and can hide
+  the app names under them. Without names the cards grow taller, so their
+  artwork fills the freed space; names are shown by default.
 - **First run.** The dock starts with a single **+** card. Press it (or Down) to
   open the library, then long-press an app and choose **Add to dock**. If the
   last app is removed, the **+** card returns.
@@ -71,7 +82,12 @@ More screenshots, including the app menu and network panel, are in
   **All apps** page starts at the first app. BACK keeps the selected app and
   returns to it.
 - **Notifications.** Active notifications, a badge, clearable-only cleanup, and
-  an optional per-app filter. System/no-clear notifications are kept.
+  an optional per-app filter. System/no-clear notifications are kept. New or
+  changed notification content can appear in a temporary glass banner that
+  slides down from the top, queues multiple alerts and leaves D-pad focus
+  untouched. Notifications waiting when access is granted are not replayed;
+  foreground-service updates and apps muted in the notification filter do not
+  pop up.
 - **Aero-glass surfaces.** Cards, the dock and every panel are built from the
   same Windows-Aero material: cool blue translucent glass, a milky gloss along
   the top edge, a diagonal reflection, a bright blue rim and a soft shadow that
@@ -101,7 +117,7 @@ More screenshots, including the app menu and network panel, are in
 | ← → on a slider | Change a volume, the wallpaper dim or the dock size |
 | ↑ from dock | Focus the status cluster (notifications / network / launcher settings) |
 | OK | Open an app / panel / menu item; finish a move |
-| Long OK | App menu: add/remove dock, move in the library, hide the app, or move a dock card |
+| Long OK | App menu: add/remove dock, move in the library, hide or delete the app, or move a dock card |
 | BACK | Close a panel/menu, leave the library, or cancel a move |
 | HOME | Return to the home screen and focus the first dock card |
 
@@ -128,7 +144,8 @@ right). Launcher settings are not duplicated in the long-press menus.
 - **Sound** — independent switches and volume levels for the background music
   and the interface sounds.
 - **Dock** — card size from smallest (up to eight apps) to largest (three
-  apps), limited to the largest size that still holds the current dock.
+  apps), limited to the largest size that still holds the current dock. Hide
+  **App names** to remove the captions and let the cards grow taller.
 - **Weather** — show or hide the whole section, show or hide the short
   forecast, choose the city, refresh now. Off by default; no network requests
   while off.
@@ -189,15 +206,18 @@ linking.
 | Permission | Why |
 |---|---|
 | `QUERY_ALL_PACKAGES` | List every installed app in the library and notification filter |
+| `REQUEST_DELETE_PACKAGES` | Open the system uninstall screen from the app menu |
 | `INTERNET` | Optional weather only; no requests while weather is off |
 | `ACCESS_NETWORK_STATE` | Show Wi-Fi/Ethernet/offline state |
 | `ACCESS_WIFI_STATE` | Read Wi-Fi signal level and SSID |
-| `BIND_NOTIFICATION_LISTENER_SERVICE` | Optional notification shade and badge |
+| `BIND_NOTIFICATION_LISTENER_SERVICE` | Optional notification shade and heads-up banners |
 
-The app accesses the network only for the optional weather section and does not
-modify other packages. Any system debloating is a separate device-level
-operation; it is not performed by the launcher. Uninstalling the launcher and
-selecting another home app is enough to revert the launcher itself.
+The app accesses the network only for the optional weather section. **Delete**
+does not uninstall anything by itself: it asks the system to show its normal
+uninstall confirmation, and the package is removed only after the user confirms
+there. No other package is changed silently. Any system debloating is a separate
+device-level operation; it is not performed by the launcher. Uninstalling the
+launcher and selecting another home app is enough to revert the launcher itself.
 
 ## Project layout
 

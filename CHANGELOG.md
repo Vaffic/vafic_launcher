@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.3.0 — 2026-10-23
+
+- Added **Delete** to the long-press app menu in both the library and the dock.
+  It opens the television's normal uninstall confirmation; after the package is
+  removed, the app leaves the dock and the library, and its saved position,
+  hidden state and notification filter entry are cleaned up.
+- Installs, updates and uninstalls now refresh the open launcher immediately.
+  The dock and library rebuild in place without leaving the screen or
+  restarting, and a change made while another app was in front is picked up on
+  return.
+- New or changed notifications can now appear in a glass banner that slides
+  down from the top, stays for a few seconds and slides away. Multiple alerts
+  are queued; the banner never takes D-pad focus, respects the per-app
+  notification filter, and does not replay notifications already present when
+  access starts. Foreground-service updates and apps muted in the notification
+  filter do not pop up.
+- The app names under the dock cards can now be hidden from the **Dock**
+  settings. The cards then grow taller, so the artwork fills the space that the
+  captions used to take. Names are shown by default.
+
 ## 1.2.0 — 2026-10-22
 
 - Added optional weather next to the clock: the current temperature, condition
