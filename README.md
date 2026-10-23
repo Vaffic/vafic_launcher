@@ -121,13 +121,7 @@ More screenshots, including the app menu and network panel, are in
 | BACK | Close a panel/menu, leave the library, or cancel a move |
 | HOME | Return to the home screen and focus the first dock card |
 
-## Install
 
-```powershell
-adb install -r vafic-launcher.apk
-adb shell cmd package set-home-activity com.vafic.launcher/.MainActivity
-adb shell cmd notification allow_listener com.vafic.launcher/.NotifListener
-```
 
 The last command is optional: without notification access the launcher still
 works, but the notification badge and shade stay empty. You can also grant access
