@@ -6,7 +6,6 @@ import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
-import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -16,14 +15,12 @@ import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 /**
- * Dock section: the user picks the size of the dock cards and whether the app
- * names are shown below them. The size directly sets how many apps fit: the
- * smallest cards hold eight apps, the largest three. The slider never grows
- * past the point where the current dock apps would stop fitting; an attempt
- * shows a warning instead of silently dropping the last app.
+ * Dock section: the user picks how many cards are visible at once and whether
+ * the app names are shown below them. The dock itself may hold more apps than
+ * fit: the extra cards are reached by scrolling left and right, so changing the
+ * size never removes or limits anything on the dock.
  */
 public class DockSettingsDialog extends VaficDialog {
 
@@ -52,7 +49,6 @@ public class DockSettingsDialog extends VaficDialog {
     private final View firstRow;
     private final TextView labelsValue;
     private final TextView note;
-    private long lastLimitToast;
 
     public DockSettingsDialog(Activity a, final Listener listener) {
         super(a);
@@ -60,11 +56,7 @@ public class DockSettingsDialog extends VaficDialog {
         activity = a;
         density = a.getResources().getDisplayMetrics().density;
 
-        final int used = Prefs.home(a).size();
-        // A larger card level holds fewer apps. Never let the user grow the
-        // cards past the level that still fits every app already on the dock.
-        final int allowedMax = Math.max(0, Math.min(LEVELS, Prefs.MAX_DOCK - used));
-        int level = Math.max(0, Math.min(allowedMax, levelFor(a)));
+        int level = Math.max(0, Math.min(LEVELS, levelFor(a)));
 
         card = new GlassPanel(a, density, 30);
         card.setClipChildren(false);
@@ -85,15 +77,15 @@ public class DockSettingsDialog extends VaficDialog {
         box.addView(title, new LinearLayout.LayoutParams(MATCH, WRAP));
 
         TextView sub = new TextView(a);
-        sub.setText(Txt.s(a, "Размер карточек и подписи внизу экрана",
-                "Card size and captions at the bottom of the screen"));
+        sub.setText(Txt.s(a, "Сколько карточек видно и подписи внизу экрана",
+                "How many cards are visible, plus captions"));
         sub.setTextSize(12);
         sub.setTextColor(0x59FFFFFF);
         sub.setPadding(0, dp(2), 0, dp(12));
         box.addView(sub, new LinearLayout.LayoutParams(MATCH, WRAP));
 
         final SliderRow size = new SliderRow(a, density,
-                Txt.s(a, "Размер", "Size"),
+                Txt.s(a, "Видно карточек", "Cards on screen"),
                 0, LEVELS, 1, level, "");
         size.setLabeler(new SliderRow.Labeler() {
             @Override
@@ -104,14 +96,6 @@ public class DockSettingsDialog extends VaficDialog {
         size.setListener(new SliderRow.Listener() {
             @Override
             public void onChanged(int value) {
-                if (value > allowedMax) {
-                    // Snap back to the largest size that still holds every
-                    // current app. Nothing is removed from the dock.
-                    size.setValue(allowedMax, false);
-                    warnLimit();
-                    updateNote(size.getValue());
-                    return;
-                }
                 int capacity = Prefs.MAX_DOCK - value;
                 Prefs.setDockSize(activity, capacity);
                 listener.onDockChanged(capacity);
@@ -146,8 +130,8 @@ public class DockSettingsDialog extends VaficDialog {
         updateNote(level);
 
         TextView foot = new TextView(a);
-        foot.setText(Txt.s(a, "\u2190 \u2192 — размер      •      OK — названия      •      BACK — назад",
-                "\u2190 \u2192 — size      •      OK — names      •      BACK — back"));
+        foot.setText(Txt.s(a, "\u2190 \u2192 — видно карточек      •      OK — названия      •      BACK — назад",
+                "\u2190 \u2192 — cards on screen      •      OK — names      •      BACK — back"));
         foot.setTextSize(12);
         foot.setTextColor(0x4DFFFFFF);
         foot.setGravity(Gravity.CENTER);
@@ -183,11 +167,20 @@ public class DockSettingsDialog extends VaficDialog {
     private void updateNote(int level) {
         if (note == null) return;
         int capacity = Prefs.MAX_DOCK - level;
-        note.setText(Txt.s(activity,
-                "Сейчас помещается " + apps(capacity)
-                        + ". Размер напрямую влияет на количество приложений.",
-                "Currently fits " + apps(capacity)
-                        + ". The size directly sets how many apps fit."));
+        int total = Prefs.home(activity).size();
+        if (total > capacity) {
+            note.setText(Txt.s(activity,
+                    "На экране " + apps(capacity) + ", всего " + total
+                            + ". Листайте док влево и вправо \u2014 крайние карточки уходят,"
+                            + " следующие приходят.",
+                    capacity + " apps on screen, " + total
+                            + " in the dock. Scroll left and right: the edge cards slide out"
+                            + " and the next ones slide in."));
+        } else {
+            note.setText(Txt.s(activity,
+                    "На экране " + apps(capacity) + ". Все приложения дока видны сразу.",
+                    capacity + " apps on screen. Every dock app is visible at once."));
+        }
     }
 
     private String apps(int n) {
@@ -232,16 +225,6 @@ public class DockSettingsDialog extends VaficDialog {
         labelsValue.setText(Txt.s(activity, shown ? "Вкл" : "Выкл",
                 shown ? "On" : "Off"));
         labelsValue.setTextColor(shown ? 0xFF8FE3A4 : 0x8AFFFFFF);
-    }
-
-    private void warnLimit() {
-        long now = SystemClock.uptimeMillis();
-        if (now - lastLimitToast < 2000) return;
-        lastLimitToast = now;
-        Toast.makeText(activity, Txt.s(activity,
-                        "Чтобы увеличить размер, сначала уберите приложение из дока.",
-                        "To enlarge the dock, remove an app first."),
-                Toast.LENGTH_SHORT).show();
     }
 
     private int dp(float v) {

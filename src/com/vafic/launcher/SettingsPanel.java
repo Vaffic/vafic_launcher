@@ -196,7 +196,8 @@ public class SettingsPanel extends VaficDialog {
         rows.addView(this.languageRow, lp(6));
 
         LinearLayout notifRow = row(Txt.s(a, "Уведомления приложений", "App notifications"),
-                "\u203A", false);
+                NotifAccess.isGranted(a) ? "\u203A"
+                        : Txt.s(a, "Нет доступа", "No access"), false);
         notifRow.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -272,6 +273,7 @@ public class SettingsPanel extends VaficDialog {
 
     private String dockSummary() {
         int n = Prefs.dockSize(activity);
+        int total = Prefs.home(activity).size();
         String size = DockSettingsDialog.sizeName(activity,
                 DockSettingsDialog.levelFor(activity));
         String suffix = Prefs.dockLabels(activity)
@@ -283,9 +285,11 @@ public class SettingsPanel extends VaficDialog {
             if (mod10 == 1 && mod100 != 11) word = "приложение";
             else if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) word = "приложения";
             else word = "приложений";
-            return size + " · " + n + " " + word + suffix;
+            String totalPart = total > n ? " · всего " + total : "";
+            return size + " · видно " + n + " " + word + totalPart + suffix;
         }
-        return size + " · " + n + (n == 1 ? " app" : " apps") + suffix;
+        String totalPart = total > n ? " · " + total + " total" : "";
+        return size + " · " + n + " visible" + totalPart + suffix;
     }
 
     private String wallpaperSummary() {

@@ -2,13 +2,19 @@ package com.vafic.launcher;
 
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.LinearGradient;
 import android.graphics.Matrix;
 import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffXfermode;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.graphics.Shader;
 import android.graphics.SweepGradient;
 import android.os.SystemClock;
 import android.view.View;
+import android.view.ViewTreeObserver;
 
 /**
  * PS5-style focus outline. A thin border hugs the focused card and glides
@@ -26,8 +32,8 @@ public class FocusRing extends View {
 
     private static final long ROTATION_MS = 3200L;
 
-    /** 30 frames per second, the rotation is slow enough to look smooth. */
-    private static final long FRAME_MS = 33L;
+    /** Display-rate updates while the outline rides a moving dock card. */
+    private static final long FRAME_MS = 16L;
 
     /**
      * Room around the outline for the soft glow. The glow is wider than the
@@ -38,18 +44,42 @@ public class FocusRing extends View {
     private final Paint base = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint shine = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint glow = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final SweepGradient sweep;
+    private final Paint maskPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private SweepGradient sweep;
+    private final int[] sweepColors;
+    private int sweepW = -1;
+    private int sweepH = -1;
     private final Matrix sweepMatrix = new Matrix();
     private final RectF rect = new RectF();
     private final RectF drawRect = new RectF();
     private final RectF target = new RectF();
     private final RectF oldRect = new RectF();
+    private final Path clipPath = new Path();
     private final Rect dirty = new Rect();
     private final Rect visibleRect = new Rect();
     private final int[] ringLoc = new int[2];
     private final int[] viewLoc = new int[2];
+    private final int[] clipLoc = new int[2];
+    private final int[] parentLoc = new int[2];
     private final float density;
-    private final float corner;
+    /** Default outline corner, used for controls that are not TileViews. */
+    private final float defaultCorner;
+    private float cornerScreenPx;
+    private float viewScaleX = 1f;
+    private float viewScaleY = 1f;
+
+    /**
+     * Optional viewport the outline has to stay inside. The dock uses it while
+     * its row slides: the card that is still crossing the plate edge must not
+     * get a free-floating outline in the empty area next to the dock.
+     */
+    private View clipView;
+    private float clipFadePx;
+    private float clipRadiusPx;
+    private float clipMaskLeft;
+    private float clipMaskRight;
+    private final PorterDuffXfermode maskMode =
+            new PorterDuffXfermode(PorterDuff.Mode.DST_IN);
 
     private View focused;
     private boolean visible;
@@ -61,7 +91,8 @@ public class FocusRing extends View {
     public FocusRing(Context c) {
         super(c);
         density = c.getResources().getDisplayMetrics().density;
-        corner = 20 * density;
+        defaultCorner = 20 * density;
+        cornerScreenPx = defaultCorner;
         setFocusable(false);
         setClickable(false);
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
@@ -75,36 +106,60 @@ public class FocusRing extends View {
         // Smooth, symmetric pearl-white ramp with a cool Aero tint. The first
         // and last stops match, so the highlight wraps around the rounded
         // rectangle without a seam.
-        int tint = 0xD8ECFF;
-        int[] colors = new int[]{
-                0x28FFFFFF, 0x32FFFFFF, 0x4AFFFFFF, 0x72FFFFFF,
-                0xA6FFFFFF, 0xD8FFFFFF, 0xF4FFFFFF, 0xFFFFFFFF,
-                0xF4FFFFFF, 0xD8FFFFFF, 0xA6FFFFFF, 0x72FFFFFF,
-                0x4AFFFFFF, 0x32FFFFFF, 0x28FFFFFF
+        sweepColors = new int[]{
+                0xFF8FB8DC, 0xFFD8ECFF, 0xFFFFFFFF, 0xFFD8ECFF, 0xFF8FB8DC
         };
-        for (int i = 0; i < colors.length; i++) {
-            int a = colors[i] >>> 24;
-            colors[i] = (a << 24) | tint;
-        }
-        float[] positions = new float[]{
-                0.00f, 0.07f, 0.16f, 0.26f, 0.36f, 0.43f, 0.48f,
-                0.50f, 0.52f, 0.57f, 0.64f, 0.74f, 0.84f, 0.93f, 1.00f
-        };
-        sweep = new SweepGradient(0f, 0f, colors, positions);
 
         shine.setStyle(Paint.Style.STROKE);
         shine.setStrokeWidth(2.4f * density);
         shine.setStrokeCap(Paint.Cap.ROUND);
         shine.setStrokeJoin(Paint.Join.ROUND);
-        shine.setShader(sweep);
 
         glow.setStyle(Paint.Style.STROKE);
         glow.setStrokeWidth(10f * density);
         glow.setStrokeCap(Paint.Cap.ROUND);
         glow.setStrokeJoin(Paint.Join.ROUND);
-        glow.setShader(sweep);
 
         rotationStart = SystemClock.uptimeMillis();
+    }
+
+    /**
+     * While the outline rides a moving card (page glide, dock slide), it is put
+     * onto the card right before every frame is drawn. A timer cannot do that:
+     * it runs at an arbitrary moment between two frames, so the outline would
+     * sometimes be placed before the page moved and sometimes after it, and a
+     * fast scroll made it shake against the card.
+     */
+    private final ViewTreeObserver.OnPreDrawListener preDraw =
+            new ViewTreeObserver.OnPreDrawListener() {
+                @Override
+                public boolean onPreDraw() {
+                    if (tracked && visible && focused != null && focused.isAttachedToWindow()) {
+                        computeTarget(target);
+                        if (!target.isEmpty() && differs(target, rect)) {
+                            rect.set(target);
+                            applyRect();
+                        }
+                    }
+                    return true;
+                }
+            };
+
+    private static boolean differs(RectF a, RectF b) {
+        return Math.abs(a.left - b.left) > 0.05f || Math.abs(a.top - b.top) > 0.05f
+                || Math.abs(a.right - b.right) > 0.05f || Math.abs(a.bottom - b.bottom) > 0.05f;
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        getViewTreeObserver().addOnPreDrawListener(preDraw);
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        getViewTreeObserver().removeOnPreDrawListener(preDraw);
+        super.onDetachedFromWindow();
     }
 
     /** Follow a focused card with a soft ease. Pass a TileView. */
@@ -128,6 +183,38 @@ public class FocusRing extends View {
             running = true;
             postOnAnimation(tick);
         }
+    }
+
+    /**
+     * Restricts the outline to the content window of a container. Cards that
+     * are halfway through the dock edge are clipped exactly like the artwork
+     * underneath them, so the border never floats over the glass margin.
+     * Pass null when the focused card is not inside a clipped viewport.
+     */
+    public void setClipView(View v) {
+        if (clipView == v) return;
+        clipView = v;
+        invalidate();
+    }
+
+    /**
+     * Feather width at the viewport edge, in screen pixels. The dock uses the
+     * same width for its card mask, so the outline dissolves exactly where the
+     * artwork under it is clipped. Set 0 for a hard clip.
+     */
+    public void setClipFade(float px) {
+        px = Math.max(0f, px);
+        if (Math.abs(px - clipFadePx) < 0.5f) return;
+        clipFadePx = px;
+        invalidate();
+    }
+
+    /** Corner radius of the viewport, so the outline cannot paint into a rounded cutout. */
+    public void setClipRadius(float px) {
+        px = Math.max(0f, px);
+        if (Math.abs(px - clipRadiusPx) < 0.5f) return;
+        clipRadiusPx = px;
+        invalidate();
     }
 
     /**
@@ -170,6 +257,8 @@ public class FocusRing extends View {
     public void hide() {
         focused = null;
         tracked = false;
+        clipView = null;
+        clipFadePx = 0f;
         if (!running) {
             running = true;
             postOnAnimation(tick);
@@ -267,6 +356,8 @@ public class FocusRing extends View {
         float ph = Math.max(1f, vh - 2f * margin);
         float sx = rect.width() / pw;
         float sy = rect.height() / ph;
+        viewScaleX = sx;
+        viewScaleY = sy;
         setScaleX(sx);
         setScaleY(sy);
         // The outline is centred on the card, the view is only the carrier.
@@ -280,11 +371,16 @@ public class FocusRing extends View {
             out.setEmpty();
             return;
         }
-        if (!card.getGlobalVisibleRect(visibleRect)
-                || visibleRect.width() < card.getWidth() * 0.5f
-                || visibleRect.height() < card.getHeight() * 0.5f) {
-            out.setEmpty();
-            return;
+        // In a clipped viewport the visible part is handled by onDraw, so a
+        // card that is only half-way through the dock edge still gets its real
+        // outline and then gets clipped with the artwork.
+        if (clipView == null) {
+            if (!card.getGlobalVisibleRect(visibleRect)
+                    || visibleRect.width() < card.getWidth() * 0.5f
+                    || visibleRect.height() < card.getHeight() * 0.5f) {
+                out.setEmpty();
+                return;
+            }
         }
         card.getLocationOnScreen(viewLoc);
         // The ring is a small view that rides on the card, so the target has
@@ -301,46 +397,153 @@ public class FocusRing extends View {
         float h = card.getHeight() * sy;
         float cx = viewLoc[0] - ringLoc[0] + w / 2f;
         float cy = viewLoc[1] - ringLoc[1] + h / 2f;
-        float pad = 1.4f * density;
-        out.set(cx - w / 2f - pad, cy - h / 2f - pad, cx + w / 2f + pad, cy + h / 2f + pad);
+        // The contour sits exactly on the card edge. The scale of the card is
+        // already part of its size, so the corner follows the same scale.
+        float corner = focused instanceof TileView
+                ? ((TileView) focused).ringCornerPx() : defaultCorner;
+        cornerScreenPx = corner * sx;
+        out.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f);
+    }
+
+    /**
+     * Starts a feathered clip when the focused card is crossing the viewport
+     * edge. The outline is drawn into a small layer and later cut with the same
+     * horizontal alpha ramp as the dock cards, so it dissolves at the edge
+     * instead of ending in a bright vertical line.
+     */
+    private int beginViewportMask(Canvas canvas) {
+        if (clipView == null || rect.isEmpty() || getWidth() == 0 || getHeight() == 0) {
+            return -1;
+        }
+        View parent = getParent() instanceof View ? (View) getParent() : null;
+        if (parent == null) return -1;
+        clipView.getLocationOnScreen(clipLoc);
+        parent.getLocationOnScreen(parentLoc);
+        // The whole container is the viewport (the dock plate), not an inner
+        // padded window. A card may travel through the glass margin.
+        float left = clipLoc[0] - parentLoc[0];
+        float right = left + clipView.getWidth();
+        float top = clipLoc[1] - parentLoc[1];
+        float bottom = top + clipView.getHeight();
+        if (rect.left >= left && rect.right <= right
+                && rect.top >= top && rect.bottom <= bottom) {
+            return -1;
+        }
+        float pivotX = getWidth() / 2f;
+        float pivotY = getHeight() / 2f;
+        float sx = getScaleX();
+        float sy = getScaleY();
+        if (sx == 0f || sy == 0f) return -1;
+        float localLeft = pivotX + (left - getLeft() - getTranslationX() - pivotX) / sx;
+        float localRight = pivotX + (right - getLeft() - getTranslationX() - pivotX) / sx;
+        float localTop = pivotY + (top - getTop() - getTranslationY() - pivotY) / sy;
+        float localBottom = pivotY + (bottom - getTop() - getTranslationY() - pivotY) / sy;
+        clipMaskLeft = Math.min(localLeft, localRight);
+        clipMaskRight = Math.max(localLeft, localRight);
+        float clipTop = Math.min(localTop, localBottom);
+        float clipBottom = Math.max(localTop, localBottom);
+        int save = canvas.saveLayer(0f, 0f, getWidth(), getHeight(), null);
+        if (clipRadiusPx > 0.5f) {
+            // Match the rounded plate so the ring cannot paint into the corner
+            // cutouts when a card is leaving the dock.
+            clipPath.reset();
+            clipPath.addRoundRect(clipMaskLeft, clipTop, clipMaskRight, clipBottom,
+                    Math.min(clipRadiusPx / sx, (clipMaskRight - clipMaskLeft) / 2f),
+                    Math.min(clipRadiusPx / sy, (clipBottom - clipTop) / 2f),
+                    Path.Direction.CW);
+            canvas.clipPath(clipPath);
+        } else {
+            canvas.clipRect(clipMaskLeft, clipTop, clipMaskRight, clipBottom);
+        }
+        return save;
+    }
+
+    /** Applies the feather and restores the layer opened by beginViewportMask. */
+    private void endViewportMask(Canvas canvas, int save) {
+        if (save < 0) return;
+        float width = clipMaskRight - clipMaskLeft;
+        float fade = clipFadePx / Math.max(0.01f, getScaleX());
+        fade = Math.min(fade, width / 2f - 0.5f);
+        if (fade > 0.5f && width > 2f) {
+            float edge = fade / width;
+            LinearGradient shader = new LinearGradient(clipMaskLeft, 0f, clipMaskRight, 0f,
+                    new int[]{0x00FFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x00FFFFFF},
+                    new float[]{0f, edge, 1f - edge, 1f},
+                    Shader.TileMode.CLAMP);
+            maskPaint.setShader(shader);
+            maskPaint.setXfermode(maskMode);
+            maskPaint.setAlpha(255);
+            canvas.drawRect(clipMaskLeft, 0f, clipMaskRight, getHeight(), maskPaint);
+        }
+        canvas.restoreToCount(save);
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
         if (alpha <= 0.01f || rect.isEmpty()) return;
 
+        int maskSave = beginViewportMask(canvas);
+
         // The outline is drawn inside its own view, with room for the glow.
         // The view itself is scaled and moved onto the card.
         float vw = getWidth();
         float vh = getHeight();
         float margin = GLOW_MARGIN_DP * density;
-        float r = Math.min(corner, Math.min(vw, vh) / 2f);
         drawRect.set(margin, margin, vw - margin, vh - margin);
+        // The carrier is wider than the cards, so the two axes have different
+        // scales. Convert the screen corner back into carrier units separately,
+        // otherwise tall cards get an oval corner.
+        float rx = cornerScreenPx / Math.max(0.01f, viewScaleX);
+        float ry = cornerScreenPx / Math.max(0.01f, viewScaleY);
+        rx = Math.min(rx, drawRect.width() / 2f);
+        ry = Math.min(ry, drawRect.height() / 2f);
+
+        ensureSweep();
 
         long now = SystemClock.uptimeMillis();
         float angle = ((now - rotationStart) % ROTATION_MS) * (360f / ROTATION_MS);
-        sweepMatrix.setRotate(angle);
-        sweepMatrix.postTranslate(drawRect.centerX(), drawRect.centerY());
+        sweepMatrix.setRotate(angle, drawRect.centerX(), drawRect.centerY());
         sweep.setLocalMatrix(sweepMatrix);
 
+        float a = alpha;
+
         // Static hairline keeps the card outline readable at the dim end of the sweep.
-        base.setAlpha((int) (alpha * 78));
-        canvas.drawRoundRect(drawRect, r, r, base);
+        base.setAlpha((int) (a * 78));
+        canvas.drawRoundRect(drawRect, rx, ry, base);
 
         // The soft halo of the Aero glass: three strokes that fade outwards.
         glow.setShader(sweep);
         glow.setStrokeWidth(20f * density);
-        glow.setAlpha((int) (alpha * 22));
-        canvas.drawRoundRect(drawRect, r, r, glow);
+        glow.setAlpha((int) (a * 22));
+        canvas.drawRoundRect(drawRect, rx, ry, glow);
         glow.setStrokeWidth(12f * density);
-        glow.setAlpha((int) (alpha * 34));
-        canvas.drawRoundRect(drawRect, r, r, glow);
+        glow.setAlpha((int) (a * 34));
+        canvas.drawRoundRect(drawRect, rx, ry, glow);
         glow.setStrokeWidth(6f * density);
-        glow.setAlpha((int) (alpha * 58));
-        canvas.drawRoundRect(drawRect, r, r, glow);
+        glow.setAlpha((int) (a * 58));
+        canvas.drawRoundRect(drawRect, rx, ry, glow);
 
         // The bright line that travels around the contour.
-        shine.setAlpha((int) (alpha * 246));
-        canvas.drawRoundRect(drawRect, r, r, shine);
+        shine.setAlpha((int) (a * 246));
+        canvas.drawRoundRect(drawRect, rx, ry, shine);
+
+        endViewportMask(canvas, maskSave);
+    }
+
+    /**
+     * Builds the sweep at the centre of the carrier. A sweep gradient whose
+     * centre sits outside the view is culled by the hardware renderer on this
+     * TV box, so the old "centre at 0,0 and translate" setup painted nothing.
+     */
+    private void ensureSweep() {
+        int w = getWidth();
+        int h = getHeight();
+        if (w <= 0 || h <= 0) return;
+        if (sweep != null && w == sweepW && h == sweepH) return;
+        sweepW = w;
+        sweepH = h;
+        sweep = new SweepGradient(w / 2f, h / 2f, sweepColors, null);
+        shine.setShader(sweep);
+        glow.setShader(sweep);
     }
 }

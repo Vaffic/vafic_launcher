@@ -47,6 +47,8 @@ public class NotifSettingsDialog extends VaficDialog {
     private final TextView summary;
     private final SmoothColumn listScroll;
     private final LinearLayout toggleRow;
+    private final LinearLayout accessRow;
+    private final TextView accessValue;
     private final TextView toggleValue;
     private final List<Row> rows = new ArrayList<>();
 
@@ -100,6 +102,40 @@ public class NotifSettingsDialog extends VaficDialog {
         sub.setPadding(0, dp(5), 0, dp(10));
         box.addView(sub, new LinearLayout.LayoutParams(MATCH, WRAP));
 
+        accessRow = new LinearLayout(a);
+        accessRow.setOrientation(LinearLayout.HORIZONTAL);
+        accessRow.setGravity(Gravity.CENTER_VERTICAL);
+        accessRow.setPadding(dp(16), dp(8), dp(16), dp(8));
+        accessRow.setMinimumHeight(dp(52));
+        accessRow.setFocusable(true);
+        accessRow.setFocusableInTouchMode(true);
+        accessRow.setClickable(true);
+        accessRow.setBackground(Styles.row(density, 16));
+        accessRow.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        accessRow.setClipChildren(false);
+        accessRow.setClipToPadding(false);
+
+        TextView accessName = new TextView(a);
+        accessName.setText(Txt.s(a, "Доступ к уведомлениям", "Notification access"));
+        accessName.setTextSize(15);
+        accessName.setTextColor(0xFFF5F5F7);
+        accessRow.addView(accessName, new LinearLayout.LayoutParams(0, WRAP, 1f));
+
+        accessValue = new TextView(a);
+        accessValue.setTextSize(13);
+        accessValue.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        accessValue.setPadding(dp(12), 0, 0, 0);
+        accessRow.addView(accessValue, new LinearLayout.LayoutParams(WRAP, WRAP));
+        box.addView(accessRow, new LinearLayout.LayoutParams(MATCH, WRAP));
+
+        accessRow.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                NotifAccess.open(activity);
+            }
+        });
+        updateAccess();
+
         toggleRow = new LinearLayout(a);
         toggleRow.setOrientation(LinearLayout.HORIZONTAL);
         toggleRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -125,7 +161,9 @@ public class NotifSettingsDialog extends VaficDialog {
         toggleValue.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
         toggleValue.setPadding(dp(12), 0, 0, 0);
         toggleRow.addView(toggleValue, new LinearLayout.LayoutParams(WRAP, WRAP));
-        box.addView(toggleRow, new LinearLayout.LayoutParams(MATCH, WRAP));
+        LinearLayout.LayoutParams tlp = new LinearLayout.LayoutParams(MATCH, WRAP);
+        tlp.topMargin = dp(6);
+        box.addView(toggleRow, tlp);
 
         toggleRow.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -380,6 +418,22 @@ public class NotifSettingsDialog extends VaficDialog {
         row.state.setTextColor(hidden ? 0x59FFFFFF : 0xFF8FE3A4);
     }
 
+    /** Shows whether the launcher can read notifications at the moment. */
+    private void updateAccess() {
+        boolean ok = NotifAccess.isGranted(activity);
+        accessValue.setText(ok
+                ? Txt.s(activity, "Разрешён", "Allowed")
+                : Txt.s(activity, "Не выдан — открыть настройки", "Not granted — open settings"));
+        accessValue.setTextColor(ok ? 0xFF8FE3A4 : 0xFFFFD9A0);
+    }
+
+    /** The user comes back from the system screen: re-check the permission. */
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) updateAccess();
+    }
+
     private void updateToggle() {
         if (loading) {
             toggleValue.setText(Txt.s(activity, "Загрузка…", "Loading…"));
@@ -422,7 +476,8 @@ public class NotifSettingsDialog extends VaficDialog {
     @Override
     public void show() {
         super.show();
-        final View target = firstRow != null ? firstRow : toggleRow;
+        final View target = !NotifAccess.isGranted(activity) ? accessRow
+                : (firstRow != null ? firstRow : toggleRow);
         target.post(new Runnable() {
             @Override
             public void run() {

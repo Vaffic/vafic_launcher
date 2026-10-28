@@ -13,10 +13,13 @@ import java.util.Set;
 /** Persisted launcher state: dock apps, library order, audio, language and hidden notifications. */
 public final class Prefs {
 
-    /** The dock can hold 3 to 8 apps; the limit is user-configurable. */
+    /** The dock shows 3 to 8 apps at once; the rest are reached by scrolling. */
     public static final int MIN_DOCK = 3;
     public static final int MAX_DOCK = 8;
     public static final int DEFAULT_DOCK = 5;
+
+    /** A sane ceiling for the whole dock, not just the visible window. */
+    public static final int MAX_HOME = 24;
 
     private static final String FILE = "vafic";
     private static final String KEY_HOME = "home";
@@ -46,27 +49,22 @@ public final class Prefs {
         return c.getSharedPreferences(FILE, Context.MODE_PRIVATE);
     }
 
-    /** Dock apps, never more than the configured dock size. */
+    /** Every app on the dock, in order. The visible part is dockSize() wide. */
     public static List<String> home(Context c) {
         String s = sp(c).getString(KEY_HOME, null);
         List<String> out = new ArrayList<>();
         if (s != null && !s.trim().isEmpty()) {
             out.addAll(Arrays.asList(s.split(",")));
         }
-        int max = dockSize(c);
-        if (out.size() > max) {
-            out = new ArrayList<>(out.subList(0, max));
-        }
         return out;
     }
 
     public static void save(Context c, List<String> pkgs) {
-        int max = dockSize(c);
-        List<String> cut = pkgs.size() > max ? pkgs.subList(0, max) : pkgs;
+        List<String> cut = pkgs.size() > MAX_HOME ? pkgs.subList(0, MAX_HOME) : pkgs;
         sp(c).edit().putString(KEY_HOME, TextUtils.join(",", cut)).apply();
     }
 
-    /** Returns false when the dock is full and the app cannot be added. */
+    /** Returns false only when the dock has reached its absolute app limit. */
     public static boolean toggle(Context c, String pkg) {
         List<String> cur = home(c);
         if (cur.contains(pkg)) {
@@ -74,7 +72,7 @@ public final class Prefs {
             save(c, cur);
             return true;
         }
-        if (cur.size() >= dockSize(c)) return false;
+        if (cur.size() >= MAX_HOME) return false;
         cur.add(pkg);
         save(c, cur);
         return true;
@@ -154,17 +152,15 @@ public final class Prefs {
 
     // ---- dock ----
 
-    /** How many apps the dock can hold, 3 to 8. */
+    /** How many dock cards are visible at once, 3 to 8. */
     public static int dockSize(Context c) {
         return Math.max(MIN_DOCK, Math.min(MAX_DOCK, readInt(sp(c), KEY_DOCK_SIZE, DEFAULT_DOCK)));
     }
 
-    /** Shrinking the dock drops the apps that no longer fit, so they never come back by surprise. */
+    /** Changes the visible window. Apps outside it stay on the dock. */
     public static void setDockSize(Context c, int size) {
         int value = Math.max(MIN_DOCK, Math.min(MAX_DOCK, size));
         sp(c).edit().putInt(KEY_DOCK_SIZE, value).apply();
-        List<String> cur = home(c);
-        save(c, cur);
     }
 
     /** Whether the app names are drawn under the dock cards. */

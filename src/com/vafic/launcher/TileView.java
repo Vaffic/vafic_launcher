@@ -25,11 +25,29 @@ public class TileView extends LinearLayout {
     private final TextView badge;
     private final GlassDrawable fill;
     private final GlassDrawable rim;
+    private final View rimView;
     private final float density;
     private final int cardHeightPx;
+    private final int cornerPx;
     private final float focusScale = 1.045f;
+    private boolean cardShadow = true;
 
     private ValueAnimator focusAnim;
+	private final Runnable settleFullScale = new Runnable() {
+        @Override
+        public void run() {
+            if (!isFocused()) return;
+            if (Ui.fast()) {
+                postDelayed(this, 100);
+                return;
+            }
+            iconBox.animate()
+                    .scaleX(focusScale).scaleY(focusScale)
+                    .setDuration(180)
+                    .setInterpolator(new OvershootInterpolator(0.4f))
+                    .start();
+        }
+    };
     private FocusListener bottomListener;
     private TextView glyphView;
 
@@ -41,6 +59,7 @@ public class TileView extends LinearLayout {
         super(c);
         density = c.getResources().getDisplayMetrics().density;
         cardHeightPx = hPx;
+        cornerPx = Math.round(cornerDp * density);
 
         setOrientation(VERTICAL);
         setGravity(Gravity.CENTER_HORIZONTAL);
@@ -59,7 +78,9 @@ public class TileView extends LinearLayout {
         iconBox.setClipChildren(true);
         iconBox.setClipToOutline(true);
         // A small resting elevation makes the card float above the wallpaper
-        // instead of lying flat on it.
+        // instead of lying flat on it. The dock turns it off: on the TV box the
+        // elevation shadow reads as a dark frame under the card and behind the
+        // caption.
         iconBox.setElevation(6 * density);
         addView(iconBox, new LayoutParams(wPx, hPx));
 
@@ -76,6 +97,7 @@ public class TileView extends LinearLayout {
         rimView.setClickable(false);
         iconBox.addView(rimView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        this.rimView = rimView;
 
         badge = new TextView(c);
         badge.setText("\u2713");
@@ -119,6 +141,30 @@ public class TileView extends LinearLayout {
         this.bottomListener = l;
     }
 
+    /**
+     * Turns the card drop shadow on or off. The dock disables it: the focused
+     * card's elevation shadow falls over the caption strip and looks like a
+     * dark frame under the app row.
+     */
+    public void setCardShadow(boolean enabled) {
+        cardShadow = enabled;
+        iconBox.setElevation(enabled ? (isFocused() ? 20 * density : 6 * density) : 0f);
+    }
+
+    /**
+     * Dock cards with a square fallback icon should not sit in a dark glass
+     * rectangle: the fill reads as a heavy frame around the artwork and makes
+     * the icon look boxed in. Removing the fill leaves the tinted dock glass
+     * visible around the icon; the thin rim keeps the slot readable.
+     */
+    public void setCardTransparent(boolean transparent) {
+        iconBox.setBackground(transparent ? null : fill);
+        // The outline follows the background. Without a fill there is nothing
+        // to clip, and the square artwork is already inside the card bounds.
+        iconBox.setClipToOutline(!transparent);
+        rimView.setVisibility(transparent ? View.INVISIBLE : View.VISIBLE);
+    }
+
     /** Wide artwork (android:banner) filling the whole card. */
     public void setBanner(Drawable d) {
         iconView.setPadding(0, 0, 0, 0);
@@ -140,6 +186,18 @@ public class TileView extends LinearLayout {
         iconView.setPadding((int) (padH * density), (int) (padV * density),
                 (int) (padH * density), (int) (padV * density));
         iconView.setScaleType(ImageView.ScaleType.FIT_XY);
+        iconView.setImageDrawable(d);
+    }
+
+    /**
+     * Dock fallback art for an app without a banner. Keeping the square icon
+     * whole instead of stretching it to the wide card is especially important
+     * when the captions are hidden and the card becomes taller.
+     */
+    public void setIconFit(Drawable d, int padH, int padV) {
+        iconView.setPadding((int) (padH * density), (int) (padV * density),
+                (int) (padH * density), (int) (padV * density));
+        iconView.setScaleType(ImageView.ScaleType.FIT_CENTER);
         iconView.setImageDrawable(d);
     }
 
@@ -201,6 +259,11 @@ public class TileView extends LinearLayout {
         return iconBox;
     }
 
+    /** Corner radius of the glass card in pixels, for the focus outline. */
+    public int ringCornerPx() {
+        return cornerPx;
+    }
+
     private void animateFocus(boolean focused) {
         // While the user holds a direction, cards settle fast and flat instead of springing.
         boolean fast = Ui.fast();
@@ -218,14 +281,17 @@ public class TileView extends LinearLayout {
             }
         });
         focusAnim.start();
-
-        float target = focused ? (fast ? 1.025f : focusScale) : 1f;
+		float target = focused ? (fast ? 1.025f : focusScale) : 1f;
         iconBox.animate()
                 .scaleX(target).scaleY(target)
                 .setDuration(fast ? (focused ? 90 : 60) : (focused ? 200 : 150))
                 .setInterpolator(fast || !focused ? new DecelerateInterpolator() : new OvershootInterpolator(0.4f))
                 .start();
-        iconBox.setElevation(focused ? 20 * density : 6 * density);
+        removeCallbacks(settleFullScale);
+        if (focused && fast) {
+            postDelayed(settleFullScale, 120);
+        }
+        iconBox.setElevation(cardShadow ? (focused ? 20 * density : 6 * density) : 0f);
         label.setTextColor(focused ? 0xFFFFFFFF : 0xB3FFFFFF);
         if (fast) {
             label.setAlpha(focused ? 1f : 0.85f);

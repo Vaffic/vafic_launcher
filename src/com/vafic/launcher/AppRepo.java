@@ -2,6 +2,7 @@ package com.vafic.launcher;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
@@ -109,7 +110,7 @@ public final class AppRepo {
                 updated = pi.lastUpdateTime;
             } catch (Exception ignored) {
             }
-            parts.add(pkg + ":" + updated);
+            parts.add(pkg + "/" + ri.activityInfo.name + ":" + updated);
         }
         Collections.sort(parts);
         StringBuilder b = new StringBuilder();
@@ -144,10 +145,19 @@ public final class AppRepo {
             Drawable d = ICONS.get(pkg);
             if (d != null) return d;
         }
+        PackageManager pm = c.getPackageManager();
         Drawable d = null;
         try {
-            d = c.getPackageManager().getApplicationIcon(pkg);
+            // Icon of the currently enabled launcher activity / activity-alias.
+            ActivityInfo a = launchActivity(pm, pkg);
+            if (a != null) d = a.loadIcon(pm);
         } catch (Exception ignored) {
+        }
+        if (d == null) {
+            try {
+                d = pm.getApplicationIcon(pkg);
+            } catch (Exception ignored) {
+            }
         }
         if (d != null) {
             synchronized (ART_LOCK) {
@@ -163,10 +173,18 @@ public final class AppRepo {
             Drawable d = BANNERS.get(pkg);
             if (d != null) return d;
         }
+        PackageManager pm = c.getPackageManager();
         Drawable d = null;
         try {
-            if (ai.banner != 0) d = c.getPackageManager().getDrawable(pkg, ai.banner, ai);
+            ActivityInfo a = launchActivity(pm, pkg);
+            if (a != null) d = a.loadBanner(pm);
         } catch (Exception ignored) {
+        }
+        if (d == null) {
+            try {
+                d = ai.loadBanner(pm);
+            } catch (Exception ignored) {
+            }
         }
         if (d != null) {
             synchronized (ART_LOCK) {
@@ -368,6 +386,19 @@ public final class AppRepo {
         }
         sort(out);
         return out;
+    }
+
+    /** The enabled launcher activity (or activity-alias) of a package. */
+    private static ActivityInfo launchActivity(PackageManager pm, String pkg) {
+        Intent i = null;
+        try {
+            i = pm.getLeanbackLaunchIntentForPackage(pkg);
+        } catch (Exception ignored) {
+        }
+        if (i == null) i = pm.getLaunchIntentForPackage(pkg);
+        if (i == null) return null;
+        ResolveInfo ri = pm.resolveActivity(i, 0);
+        return ri == null ? null : ri.activityInfo;
     }
 
     private static List<ResolveInfo> launchables(PackageManager pm) {

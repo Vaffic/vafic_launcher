@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.4.0 — 2026-10-28
+
+- The dock is now scrollable. It still shows three to eight cards at once, but
+  can hold up to 24 apps; moving past the visible window slides the row one card
+  at a time, with a soft edge fade and a short resistance nudge at either end.
+  The **Dock** setting now changes only the visible window and never removes
+  apps.
+- Fixed the focus outline while the dock moves: it follows the card, is clipped
+  and faded together with the artwork at the plate edge, and no longer leaves a
+  bright vertical line or a detached outline. The initial focus animation and
+  the library focus restore no longer flash or play a stray tick.
+- Added basic gamepad support. A / left-stick click work as OK, B as BACK, and
+  the D-pad, left stick and hat move focus with hold-to-repeat, including inside
+  the launcher's dialogs.
+- Added handling for the remote's gear and TV keys: the gear opens Android TV
+  settings and TV opens Live TV or the channel list when the device provides it.
+- Added a notification-access prompt. When access is missing, the launcher asks
+  once per start with **Grant access**, **Later** and **Don't remind me**; the
+  badge and **App notifications** settings open the same prompt or the system
+  screen. On Android 13+ the dialog also explains how to remove the restricted
+  settings limitation for apps installed from outside a store. The **App
+  notifications** section now shows the current access state.
+- The Android TV launcher entry now uses its own icon and banner, registers the
+  leanback category and marks the touchscreen as optional. Icons and banners are
+  read from the active leanback/launcher activity, so activity-alias packages
+  show the right artwork.
+- Added short interface cues for the dock edge and incoming notification
+  banners.
+
 ## 1.3.0 — 2026-10-23
 
 - Added **Delete** to the long-press app menu in both the library and the dock.

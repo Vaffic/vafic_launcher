@@ -8,8 +8,10 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Outline;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
@@ -26,8 +28,10 @@ import android.os.SystemClock;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 import android.view.ViewTreeObserver;
 import android.view.Window;
 import android.view.WindowManager;
@@ -78,6 +82,12 @@ public class MainActivity extends Activity {
     /** How long a heads-up banner stays on screen before sliding back up. */
     private static final long BANNER_VISIBLE_MS = 4200L;
 
+    /** One dock page step: short enough to feel instant, long enough to read. */
+    private static final long DOCK_SLIDE_MS = 220L;
+
+    /** The resistance nudge at either end of the dock. */
+    private static final long DOCK_BUMP_MS = 220L;
+
     private final Handler handler = new Handler(Looper.getMainLooper());
     private SimpleDateFormat timeFmt;
     private SimpleDateFormat dateFmt;
@@ -88,7 +98,7 @@ public class MainActivity extends Activity {
     private FrameLayout homePage;
     private FrameLayout libraryPage;
     private Backdrop backdrop;
-    private FrameLayout dock;
+    private DockPlate dock;
     private LinearLayout dockRow;
     private SmoothColumn libScroll;
     private GridLayout grid;
@@ -109,10 +119,29 @@ public class MainActivity extends Activity {
     private boolean libraryBuilt;
     private boolean libraryGliding;
     private boolean firstRender = true;
+    /** Library card width/height and artwork padding follow the display width. */
+    private int libraryTileDp = 148;
+    private float libraryScale = 1f;
     private int dockIndex;
     /** The dock card the cursor is on. It is updated at once, so a held
      *  direction walks the dock card by card. */
     private int dockCursor;
+    /** First dock app in the visible window. */
+    private int dockStart;
+    /** Cards that fit in the plate at the current size. */
+    private int dockVisible = 1;
+    /** Distance from one dock card to the next, in pixels. */
+    private int dockStepPx;
+    /** Width of the soft edge ramp inside the dock viewport, in pixels. */
+    private float dockFadePx;
+    /** True while the row is sliding between two windows. */
+    private boolean dockSliding;
+    private long dockAnimStart;
+    private float dockAnimFrom;
+    private float dockAnimTo;
+    private long dockBumpStart;
+    private int dockBumpDir;
+    private boolean dockBumping;
     private int libraryCloseFocus = -1;
     private final List<Dialog> dialogs = new ArrayList<>();
     private String lastLibPkg;
@@ -152,12 +181,18 @@ public class MainActivity extends Activity {
     private int tickSound;
     private int forwardSound;
     private int backSound;
+    private int edgeSound;
+    private int notifySound;
     private boolean tickReady;
     private boolean forwardReady;
     private boolean backReady;
+    private boolean edgeReady;
+    private boolean notifyReady;
     private long lastNavSound;
     private long lastForwardSound;
     private long lastBackSound;
+    private long lastEdgeSound;
+    private long lastNotifySound;
 
     private final Runnable tick = new Runnable() {
         @Override
@@ -269,17 +304,14 @@ public class MainActivity extends Activity {
                 new ViewTreeObserver.OnGlobalFocusChangeListener() {
                     @Override
                     public void onGlobalFocusChanged(View oldFocus, View newFocus) {
-                        // Every focusable control that can be pressed gets the
-                        // same tick: dock tiles, the top status icons and the
-                        // rows of the menus. The window check keeps the tick
-                        // inside the launcher and its own dialogs only.
                         if (newFocus == null || newFocus == oldFocus
                                 || !newFocus.isClickable()) return;
+                        newFocus.setSoundEffectsEnabled(false);
                         View root = newFocus.getRootView();
                         if (root == null || !root.hasWindowFocus()) return;
-                        // The framework would add its own click on top of our
-                        // tick; every focused control is silent instead.
-                        newFocus.setSoundEffectsEnabled(false);
+                        // Не играем тик при первичном фокусе окна или при программном
+                        // восстановлении фокуса в библиотеке после её открытия
+                        if (oldFocus == null || restoringLibraryFocus) return;
                         playNavTick();
                     }
                 });
@@ -336,6 +368,8 @@ public class MainActivity extends Activity {
                         if (libTile && restoringLibraryFocus) return;
                         if (newFocus instanceof TileView) {
                             if (libTile) {
+                                ring.setClipView(null);
+                                ring.setClipFade(0f);
                                 if (newFocus.getTag() instanceof String) {
                                     lastLibPkg = (String) newFocus.getTag();
                                 }
@@ -344,10 +378,25 @@ public class MainActivity extends Activity {
                                 scrollLibraryTo(newFocus);
                                 if (libraryGliding) ring.track(newFocus);
                                 else ring.follow(newFocus);
+                            } else if (newFocus.getParent() == dockRow) {
+                                if (dockSliding || dockBumping) {
+                                    ring.setClipView(dock);
+                                    ring.setClipFade(dockFadePx);
+                                    ring.setClipRadius(dp(30));
+                                    ring.track(newFocus);
+                                } else {
+                                    ring.setClipView(null);
+                                    ring.setClipFade(0f);
+                                    ring.follow(newFocus);
+                                }
                             } else {
+                                ring.setClipView(null);
+                                ring.setClipFade(0f);
                                 ring.follow(newFocus);
                             }
                         } else {
+                            ring.setClipView(null);
+                            ring.setClipFade(0f);
                             ring.hide();
                         }
                         if (newFocus != null) {
@@ -469,7 +518,7 @@ public class MainActivity extends Activity {
         hlp.bottomMargin = dp(10);
         bottom.addView(hint, hlp);
 
-        dock = new FrameLayout(this);
+        dock = new DockPlate(this);
         GradientDrawable dockBg = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
                 new int[]{0x4DA8D0EE, 0x1E2A4A6E});
         dockBg.setCornerRadius(dp(30));
@@ -482,15 +531,34 @@ public class MainActivity extends Activity {
                 new android.graphics.drawable.Drawable[]{dockBg, dockGlass}));
         dock.setClipChildren(false);
         dock.setClipToPadding(false);
-        dock.setElevation(dp(12));
+        // No elevation on the plate: its own shadow was visible through the
+        // translucent glass as a dark rounded band behind the captions. The
+        // bright rim already separates the dock from the wallpaper.
+        dock.setElevation(0f);
+
+        // The plate is a viewport: the full row of cards lives inside it and
+        // slides, while the rounded outline masks the cards that leave and
+        // arrive at the edges.
+        final float dockRadius = dp(30);
+        dock.setClipChildren(true);
+        dock.setClipToOutline(true);
+        dock.setOutlineProvider(new ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dockRadius);
+            }
+        });
 
         dockRow = new LinearLayout(this);
         dockRow.setOrientation(LinearLayout.HORIZONTAL);
-        dockRow.setGravity(Gravity.CENTER);
+        dockRow.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
         dockRow.setClipChildren(false);
         dockRow.setClipToPadding(false);
         dockRow.setPadding(dp(22), dp(13), dp(22), dp(13));
-        dock.addView(dockRow, new FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER));
+        // The row must measure all of its cards. Matching the plate width would
+        // make its translated bounds end at the plate edge and the cards that
+        // scrolled into that edge could be culled by the renderer.
+        dock.addView(dockRow, new FrameLayout.LayoutParams(WRAP, WRAP));
 
         // The plate hugs the cards: with three apps it is a smaller island,
         // with eight it grows wider and the cards become compact.
@@ -514,6 +582,19 @@ public class MainActivity extends Activity {
             if (f.getTag() instanceof String) focusedPkg = (String) f.getTag();
         }
 
+        // A rebuild replaces the row; any glide from the old one would keep
+        // moving a detached view and leave the new row at a stale offset.
+        dockRow.removeCallbacks(dockSlideStep);
+        dockRow.removeCallbacks(dockBumpStep);
+        dockRow.animate().cancel();
+        dockSliding = false;
+        dockBumping = false;
+        dock.setEdgeFade(0f);
+        if (ring != null) {
+            ring.setClipView(null);
+            ring.setClipFade(0f);
+        }
+
         dockRow.removeAllViews();
         List<AppRepo.App> apps = AppRepo.homeApps(this);
         int capacity = Prefs.dockSize(this);
@@ -527,11 +608,21 @@ public class MainActivity extends Activity {
         int gap = capacity >= 7 ? dp(8) : dp(12);
         int padH = Math.max(dp(8), dp(22f * tileDp / 146f));
         int padV = Math.max(dp(5), dp(13f * tileDp / 146f));
+        // The plate itself is the viewport: the row starts at the padding so
+        // the cards line up with the glass margin at rest, but during a slide
+        // they travel into that margin and are cut only by the rounded plate.
         dockRow.setPadding(padH, padV, padH, padV);
+        dock.setPadding(0, 0, 0, 0);
+        dock.setClipToPadding(false);
+        // A card that crosses the plate edge is ramped out over the glass
+        // margin, so the transition starts at the rounded frame itself.
+        dockFadePx = padH * 0.75f;
+        dock.setFadeWidth(dockFadePx);
 
         if (apps.isEmpty()) {
             TileView add = tile(Txt.s(this, "Добавить", "Add apps"), tileDp, tileHdp,
                     labelSp, corner, showLabels);
+            add.setCardShadow(false);
             add.setGlyph("+", Math.max(22, Math.round(34f * tileDp / 146f)));
             add.setOnClickListener(new View.OnClickListener() {
                 @Override
@@ -545,6 +636,7 @@ public class MainActivity extends Activity {
             final AppRepo.App a = apps.get(i);
             final int pos = i;
             final TileView v = tile(a.label, tileDp, tileHdp, labelSp, corner, showLabels);
+            v.setCardShadow(false);
             v.setTag(a.pkg);
             bindDockArt(v, a, showLabels);
             v.setOnClickListener(new View.OnClickListener() {
@@ -565,17 +657,48 @@ public class MainActivity extends Activity {
             dockRow.addView(v, lp);
         }
 
+        int cards = Math.max(1, dockRow.getChildCount());
+        dockVisible = Math.max(1, Math.min(capacity, cards));
+        dockStepPx = dp(tileDp) + gap;
+
+        // The row itself must span every card, not just the visible window.
+        // A WRAP_CONTENT child of the fixed-width plate is measured AT_MOST,
+        // which squeezes the cards beyond the window to zero width.
+        int rowWidth = padH * 2 + dp(tileDp) * cards + gap * Math.max(0, cards - 1);
+        ViewGroup.LayoutParams rlp = dockRow.getLayoutParams();
+        if (!(rlp instanceof FrameLayout.LayoutParams)) {
+            rlp = new FrameLayout.LayoutParams(rowWidth, WRAP);
+        }
+        if (rlp.width != rowWidth) {
+            rlp.width = rowWidth;
+            dockRow.setLayoutParams(rlp);
+        }
+
+        // The plate is only as wide as the visible window. Everything else is
+        // already laid out in the row and simply waits outside the mask.
+        int dockWidth = padH * 2 + dp(tileDp) * dockVisible + gap * (dockVisible - 1);
+        ViewGroup.LayoutParams dlp = dock.getLayoutParams();
+        if (!(dlp instanceof LinearLayout.LayoutParams)) {
+            dlp = new LinearLayout.LayoutParams(dockWidth, WRAP);
+        }
+        if (dlp.width != dockWidth) {
+            dlp.width = dockWidth;
+            dock.setLayoutParams(dlp);
+        }
+
         renderedKey = TextUtils.join(",", Prefs.home(this));
 
         boolean first = firstRender;
         firstRender = false;
         if (first && cascade) {
+            // Only the visible cards need a spread-out entrance; the hidden
+            // ones just need their alpha restored so they are ready to scroll in.
             for (int i = 0; i < dockRow.getChildCount(); i++) {
                 View ch = dockRow.getChildAt(i);
                 ch.setAlpha(0f);
                 ch.setTranslationY(dp(24));
                 ch.animate().alpha(1f).translationY(0f)
-                        .setStartDelay(80 + i * 55L)
+                        .setStartDelay(80 + Math.min(i, dockVisible - 1) * 55L)
                         .setDuration(420)
                         .setInterpolator(new DecelerateInterpolator())
                         .start();
@@ -587,11 +710,31 @@ public class MainActivity extends Activity {
             int byPkg = dockIndexOf(focusedPkg);
             if (byPkg >= 0) restore = byPkg;
         }
-        if (restore >= 0) {
+        if (restore < 0) restore = dockIndex;
+        restore = Math.max(0, Math.min(restore, dockRow.getChildCount() - 1));
+        dockCursor = restore;
+        dockIndex = restore;
+
+        // Keep the remembered card inside the visible window without gliding:
+        // a rebuild should look like the same dock, only with changed contents.
+        clampDockWindow(restore);
+        applyDockTranslation();
+        applyDockCardWindow();
+
+        if (focused >= 0 || focusedPkg != null || first) {
             focusDock(restore);
-        } else if (first) {
-            focusDock(0);
         }
+    }
+
+    /**
+     * Applies the soft edge mask of the plate and feathers the focus outline
+     * with exactly the same ramp. During a slide the outline rides its card
+     * and dissolves over the ramp instead of being hidden, so it never blinks
+     * out and back in between two cards.
+     */
+    private void applyDockEdgeFade(float mask) {
+        if (dock == null || dockRow == null) return;
+        dock.setEdgeFade(mask);
     }
 
     /** Index of a dock card by package, or -1 when it is not on the dock. */
@@ -603,6 +746,169 @@ public class MainActivity extends Activity {
         }
         return -1;
     }
+
+    /** Keeps the visible window over the focused card, clamped to the row. */
+    private void clampDockWindow(int center) {
+        int count = dockRow == null ? 0 : dockRow.getChildCount();
+        if (count == 0) {
+            dockStart = 0;
+            return;
+        }
+        int maxStart = Math.max(0, count - dockVisible);
+        if (center < dockStart) dockStart = center;
+        else if (center >= dockStart + dockVisible) dockStart = center - dockVisible + 1;
+        dockStart = Math.max(0, Math.min(dockStart, maxStart));
+    }
+
+    /** Puts the row at the offset for the current window, without animating. */
+    private void applyDockTranslation() {
+        if (dockRow == null) return;
+        dockRow.setTranslationX(-dockStart * (float) dockStepPx);
+    }
+
+    private void slideDockWindow(int fromStart) {
+        if (dockRow == null || dockStepPx <= 0) return;
+        dockRow.removeCallbacks(dockSlideStep);
+        dockRow.removeCallbacks(dockBumpStep);
+        dockBumping = false;
+        dockAnimFrom = dockRow.getTranslationX();
+        dockAnimTo = -dockStart * (float) dockStepPx;
+        dockAnimStart = SystemClock.uptimeMillis();
+        dockSliding = true;
+
+        updateVisibleDockCardsForCurrentTranslation();
+        applyDockEdgeFade(1f);
+        dockRow.postOnAnimation(dockSlideStep);
+    }
+
+    /**
+     * Вычисляет видимые карточки по фактическому текущему сдвигу translationX,
+     * чтобы при серии быстрых нажатий карточки на экране никогда не гасли раньше времени.
+     */
+    private void updateVisibleDockCardsForCurrentTranslation() {
+        if (dockRow == null || dockStepPx <= 0) return;
+        float tx = dockRow.getTranslationX();
+        int currentFirst = (int) Math.floor(-tx / (float) dockStepPx);
+        int first = Math.min(currentFirst, dockStart) - 1;
+        int last = Math.max(currentFirst, dockStart) + dockVisible;
+        showDockCards(first, last);
+    }
+
+    /**
+     * While the row glides, a card fades with the share of it that is still
+     * inside the working area of the plate (the plate without its side
+     * margins). A card that has left the area is fully transparent, so no
+     * sliver of it stays visible in the glass margin.
+     */
+    private void applyDockCardAlpha(boolean reset) {
+        if (dockRow == null || dock == null) return;
+        float innerL = dockRow.getPaddingLeft();
+        float innerR = dock.getWidth() - dockRow.getPaddingRight();
+        float tx = dockRow.getTranslationX();
+        for (int i = 0; i < dockRow.getChildCount(); i++) {
+            View c = dockRow.getChildAt(i);
+            float a = 1f;
+            if (!reset && c.getVisibility() == View.VISIBLE && c.getWidth() > 0 && dock.getWidth() > 0) {
+                float x = c.getLeft() + tx;
+                float overlap = Math.min(x + c.getWidth(), innerR) - Math.max(x, innerL);
+                a = Math.max(0f, Math.min(1f, overlap / c.getWidth()));
+            }
+            if (c.getAlpha() != a) c.setAlpha(a);
+        }
+    }
+
+    /** Makes only the given card range visible in the row. */
+    private void showDockCards(int first, int last) {
+        if (dockRow == null) return;
+        int count = dockRow.getChildCount();
+        first = Math.max(0, first);
+        last = Math.min(count - 1, last);
+        for (int i = 0; i < count; i++) {
+            View child = dockRow.getChildAt(i);
+            int want = i >= first && i <= last ? View.VISIBLE : View.INVISIBLE;
+            if (child.getVisibility() != want) child.setVisibility(want);
+        }
+    }
+
+    /** Hides everything outside the current visible window and restores full alpha. */
+    private void applyDockCardWindow() {
+        if (dockRow == null) return;
+        showDockCards(dockStart, dockStart + dockVisible - 1);
+        applyDockCardAlpha(true);
+    }
+
+    private final Runnable dockSlideStep = new Runnable() {
+        @Override
+        public void run() {
+            if (dockRow == null) return;
+            float t = (SystemClock.uptimeMillis() - dockAnimStart) / (float) DOCK_SLIDE_MS;
+            if (t > 1f) t = 1f;
+            float inv = 1f - t;
+            float ease = 1f - inv * inv * inv;
+            dockRow.setTranslationX(dockAnimFrom + (dockAnimTo - dockAnimFrom) * ease);
+            updateVisibleDockCardsForCurrentTranslation();
+            applyDockCardAlpha(false);
+            applyDockEdgeFade(1f);
+            if (t < 1f) {
+                dockRow.postOnAnimation(this);
+                return;
+            }
+            dockRow.setTranslationX(dockAnimTo);
+            dockSliding = false;
+            applyDockEdgeFade(0f);
+            applyDockCardWindow();
+            if (ring != null) {
+                ring.setClipView(null);
+                ring.setClipFade(0f);
+                View focus = dockRow.findFocus();
+                if (focus != null) ring.follow(focus);
+            }
+        }
+    };
+
+    /** Soft resistance at either end of the dock, with the edge sound. */
+    private void bumpDock(int direction) {
+        playEdge();
+        if (dockSliding || dockBumping || dockRow == null || dockStepPx <= 0) return;
+        dockBumpDir = direction;
+        dockBumpStart = SystemClock.uptimeMillis();
+        dockBumping = true;
+        if (ring != null) {
+            ring.setClipView(dock);
+            ring.setClipFade(dockFadePx);
+            ring.setClipRadius(dp(30));
+        }
+        dockRow.removeCallbacks(dockBumpStep);
+        dockRow.postOnAnimation(dockBumpStep);
+    }
+
+    private final Runnable dockBumpStep = new Runnable() {
+        @Override
+        public void run() {
+            if (dockRow == null) return;
+            float t = (SystemClock.uptimeMillis() - dockBumpStart) / (float) DOCK_BUMP_MS;
+            if (t > 1f) t = 1f;
+            float base = -dockStart * (float) dockStepPx;
+            // A half sine: the plate yields a few pixels and settles back.
+            float offset = -(float) Math.sin(Math.PI * t) * dp(9) * dockBumpDir;
+            dockRow.setTranslationX(base + offset);
+            applyDockEdgeFade(1f);
+            if (t < 1f) {
+                dockRow.postOnAnimation(this);
+                return;
+            }
+            dockRow.setTranslationX(base);
+            dockBumping = false;
+            applyDockEdgeFade(0f);
+            applyDockCardWindow();
+            if (ring != null) {
+                ring.setClipView(null);
+                ring.setClipFade(0f);
+                View focus = dockRow.findFocus();
+                if (focus != null) ring.follow(focus);
+            }
+        }
+    };
 
     /**
      * Rebuilds the dock and the library after a package change. The app that
@@ -635,15 +941,18 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Dock card width in dp for the chosen capacity. Three apps get wide
-     * covers, eight compact ones; the result is clamped so the plate always
-     * fits between the side margins of the bottom cluster.
+     * Dock card width in dp for the chosen capacity. The design is based on a
+     * 960 dp wide screen; wider (lower-density) displays scale the cards up so
+     * the plate keeps its share of the screen instead of shrinking into a small
+     * island on the left. The fit check still keeps the plate between the side
+     * margins on narrow screens.
      */
     private int dockTileWidth(int count) {
-        float desiredDp = 180f - (count - 3) * 16.8f;
+        int screenDp = Math.round(getResources().getDisplayMetrics().widthPixels / density);
+        float scale = Math.max(0.68f, screenDp / 960f);
+        float desiredDp = (180f - (count - 3) * 16.8f) * scale;
         int padDp = Math.max(10, Math.round(22f * desiredDp / 146f));
         int gapDp = count >= 7 ? 8 : 12;
-        int screenDp = Math.round(getResources().getDisplayMetrics().widthPixels / density);
         int fit = (screenDp - 128 - padDp * 2 - gapDp * (count - 1)) / count;
         return Math.min(Math.round(desiredDp), Math.max(72, fit));
     }
@@ -654,11 +963,34 @@ public class MainActivity extends Activity {
             public void run() {
                 if (dockRow.getChildCount() == 0) return;
                 int i = Math.max(0, Math.min(index, dockRow.getChildCount() - 1));
+                dockCursor = i;
+                dockIndex = i;
+                // A programmatic focus (install, return from the library) must
+                // bring its card into view. User-driven steps already shifted
+                // the window, so this is a no-op there and does not fight the
+                // running glide.
+                int before = dockStart;
+                clampDockWindow(i);
+                if (before != dockStart && !dockSliding) {
+                    applyDockTranslation();
+                    applyDockCardWindow();
+                }
                 View target = dockRow.getChildAt(i);
                 target.requestFocus();
                 // If this card already had focus, no global focus-change event fires.
                 // Re-follow it explicitly so HOME always restores the outline.
-                if (ring != null) ring.follow(target);
+                if (ring != null) {
+                    if (dockSliding || dockBumping) {
+                        ring.setClipView(dock);
+                        ring.setClipFade(dockFadePx);
+                        ring.setClipRadius(dp(30));
+                        ring.track(target);
+                    } else {
+                        ring.setClipView(null);
+                        ring.setClipFade(0f);
+                        ring.follow(target);
+                    }
+                }
             }
         });
     }
@@ -667,16 +999,65 @@ public class MainActivity extends Activity {
      * Moves the dock cursor sideways. The dock is the lowest row of the screen,
      * so the default focus search jumps up to the status cluster as soon as the
      * last card is reached. The cursor stays inside the dock instead.
+     *
+     * At either edge of the visible window the row glides by one card: the
+     * outermost card leaves the plate and the next one arrives on the other
+     * side. At the absolute ends of the dock the plate gives a small resistant
+     * nudge and plays the edge sound.
      */
     private void moveDockFocus(int delta) {
         int count = dockRow.getChildCount();
         if (count == 0) return;
-        int next = Math.max(0, Math.min(dockCursor + delta, count - 1));
-        if (next == dockCursor) return;
+        int next = dockCursor + delta;
+        if (next < 0 || next >= count) {
+            bumpDock(delta);
+            return;
+        }
+
+        int fromStart = dockStart;
+        int maxStart = Math.max(0, count - dockVisible);
+        boolean shifted = false;
+        if (delta > 0) {
+            // While there is at least one app after the window, the focused
+            // card stops in the penultimate slot, so the next app stays
+            // visible on the right instead of the focus sitting on the edge.
+            int penultimate = dockStart + dockVisible - 2;
+            if (dockVisible >= 2 && dockStart < maxStart && next >= penultimate) {
+                // Move the window by at most one card per key press; a focus
+                // restored at the edge catches up on the following press.
+                int desired = Math.min(next - (dockVisible - 2), dockStart + 1);
+                desired = Math.max(dockStart, Math.min(desired, maxStart));
+                if (desired != dockStart) {
+                    dockStart = desired;
+                    shifted = true;
+                }
+            }
+            if (!shifted && next >= dockStart + dockVisible) {
+                dockStart = Math.min(next - dockVisible + 1, maxStart);
+                shifted = true;
+            }
+        } else if (delta < 0) {
+            // The same on the other side: keep one card visible before the
+            // focused one, so the row never parks the focus on the left edge.
+            if (dockVisible >= 2 && dockStart > 0 && next <= dockStart + 1) {
+                int desired = Math.max(next - 1, dockStart - 1);
+                desired = Math.max(0, Math.min(desired, dockStart));
+                if (desired != dockStart) {
+                    dockStart = desired;
+                    shifted = true;
+                }
+            }
+            if (!shifted && next < dockStart) {
+                dockStart = next;
+                shifted = true;
+            }
+        }
+
         // The cursor moves at once, so a held direction walks card by card
         // instead of queueing several moves on the same card.
         dockCursor = next;
         dockIndex = next;
+        if (shifted) slideDockWindow(fromStart);
         focusDock(next);
     }
 
@@ -819,10 +1200,25 @@ public class MainActivity extends Activity {
 
     private void renderLibrary() {
         grid.removeAllViews();
+
+        // The library is a five-column grid. Fixed dp cards left a dead strip
+        // on the right as soon as the user lowered the display density, so the
+        // card width now comes from the actual screen width. The whole grid
+        // (cards plus their margins) fills the content area at every density.
+        int screenDp = Math.round(getResources().getDisplayMetrics().widthPixels / density);
+        float densityScale = screenDp / 960f;
+        int cellMarginDp = Math.max(10, Math.round(18f * densityScale));
+        int usableDp = Math.max(440, screenDp - 128 - GRID_COLS * cellMarginDp);
+        libraryTileDp = Math.max(72, usableDp / GRID_COLS);
+        libraryScale = libraryTileDp / 148f;
+        int tileHDp = Math.max(42, Math.round(83f * libraryScale));
+        int labelSp = Math.max(9, Math.min(18, Math.round(11f * libraryScale)));
+        int cornerDp = Math.max(14, Math.min(30, Math.round(18f * libraryScale)));
+
         List<AppRepo.App> apps = AppRepo.allApps(this);
         for (AppRepo.App a : apps) {
             final AppRepo.App app = a;
-            final TileView v = tile(a.label, 148, 83, 11, 18);
+            final TileView v = tile(a.label, libraryTileDp, tileHDp, labelSp, cornerDp);
             bindArt(v, a);
             v.setTag(a.pkg);
             v.setOnClickListener(new View.OnClickListener() {
@@ -1273,10 +1669,9 @@ public class MainActivity extends Activity {
                         renderDock(false);
                     } else {
                         if (!Prefs.toggle(MainActivity.this, a.pkg)) {
-                            int maxDock = Prefs.dockSize(MainActivity.this);
                             showLibraryNotice(Txt.s(MainActivity.this,
-                                    "На доке максимум " + maxDock + " приложений",
-                                    "The dock holds up to " + maxDock + " apps"), 3500);
+                                    "На доке максимум " + Prefs.MAX_HOME + " приложений",
+                                    "The dock holds up to " + Prefs.MAX_HOME + " apps"), 3500);
                             return;
                         }
                         renderDock(false);
@@ -1460,9 +1855,30 @@ public class MainActivity extends Activity {
         playForward();
         ring.hide();
         try {
-            tracked(new NotifPanel(this)).show();
+            // Without notification access the panel would always be empty,
+            // so the badge offers the permission instead.
+            if (NotifAccess.isGranted(this)) tracked(new NotifPanel(this)).show();
+            else tracked(new NotifAccessDialog(this)).show();
         } catch (Exception ignored) {
         }
+    }
+
+    /** Offers the notification access permission once per start, if it is missing. */
+    private void maybeAskNotifAccess() {
+        if (isFinishing() || !dialogs.isEmpty() || !NotifAccess.shouldAskOnLaunch(this)) return;
+        NotifAccess.markAsked();
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (isFinishing() || !dialogs.isEmpty()
+                        || NotifAccess.isGranted(MainActivity.this)) return;
+                if (ring != null) ring.hide();
+                try {
+                    tracked(new NotifAccessDialog(MainActivity.this)).show();
+                } catch (Exception ignored) {
+                }
+            }
+        }, 900);
     }
 
     // ------------------------------------------------------------ heads-up
@@ -1484,6 +1900,7 @@ public class MainActivity extends Activity {
         if (bannerShowing || bannerQueue.isEmpty() || isFinishing() || bannerLayer == null) return;
         Banner b = bannerQueue.remove(0);
         bannerShowing = true;
+        playNotification();
 
         final View v = buildBannerView(b);
         bannerView = v;
@@ -1809,12 +2226,15 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void launch(String pkg) {
+	private void launch(String pkg) {
         if (movePkg != null || libraryMoving) return;
         Intent i = AppRepo.launch(this, pkg);
         if (i != null) {
             playForward();
             try {
+                // Добавляем флаги, чтобы приложение запускалось в чистом корневом таске
+                // и корректно сохраняло свои файлы конфигурации (как в родном лаунчере)
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
                 startActivity(i);
             } catch (Exception ignored) {
             }
@@ -1833,7 +2253,13 @@ public class MainActivity extends Activity {
     }
 
     private void bindArt(TileView v, AppRepo.App a) {
-        bindArt(v, a, false);
+        if (a.banner != null) {
+            v.setBanner(a.banner);
+        } else {
+            v.setIcon(a.icon,
+                    Math.max(20, Math.round(26f * libraryScale)),
+                    Math.max(12, Math.round(16f * libraryScale)));
+        }
     }
 
     /** Dock artwork with a tighter frame when the captions are hidden. */
@@ -1841,21 +2267,11 @@ public class MainActivity extends Activity {
         if (a.banner != null) {
             v.setBanner(a.banner);
         } else {
-            v.setIcon(a.icon, showLabels ? 14 : 12, showLabels ? 9 : 7);
-        }
-    }
-
-    /**
-     * Puts the artwork on the card. The dock uses tighter icon margins, so the
-     * artwork fills the glass card.
-     */
-    private void bindArt(TileView v, AppRepo.App a, boolean compact) {
-        if (a.banner != null) {
-            v.setBanner(a.banner);
-        } else if (compact) {
-            v.setIcon(a.icon, 14, 9);
-        } else {
-            v.setIcon(a.icon, 26, 16);
+            // A square icon has no banner to fill the card. Drop the dark card
+            // fill so the artwork floats on the dock glass instead of being
+            // surrounded by a hard, darker frame.
+            v.setCardTransparent(true);
+            v.setIconFit(a.icon, showLabels ? 16 : 14, showLabels ? 10 : 8);
         }
     }
 
@@ -1863,7 +2279,8 @@ public class MainActivity extends Activity {
         GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
         lp.width = WRAP;
         lp.height = WRAP;
-        lp.setMargins(dp(4), dp(6), dp(14), dp(14));
+        lp.setMargins(dp(4f * libraryScale), dp(6f * libraryScale),
+                dp(14f * libraryScale), dp(14f * libraryScale));
         return lp;
     }
 
@@ -2119,28 +2536,63 @@ public class MainActivity extends Activity {
         return sample;
     }
 
+    /**
+     * Opens a third-party image/file picker. Televisions rarely ship the AOSP
+     * DocumentsUI, but they often have a gallery or a file manager that can
+     * return a picture. The candidates go from the modern Storage Access
+     * Framework down to a plain "get any file" request, and the system chooser
+     * is used when more than one app answers. The launcher never implements its
+     * own file browser: it only hands the request to an installed app.
+     */
     private void pickWallpaper() {
-        Intent open = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        open.addCategory(Intent.CATEGORY_OPENABLE);
-        open.setType("image/*");
-        try {
-            startActivityForResult(open, REQ_WALLPAPER);
-            return;
-        } catch (ActivityNotFoundException ignored) {
+        List<Intent> candidates = new ArrayList<>();
+        candidates.add(pickerIntent(Intent.ACTION_OPEN_DOCUMENT, "image/*", true, false));
+        candidates.add(pickerIntent(Intent.ACTION_OPEN_DOCUMENT, "image/*", false, false));
+        candidates.add(pickerIntent(Intent.ACTION_GET_CONTENT, "image/*", true, false));
+        candidates.add(pickerIntent(Intent.ACTION_GET_CONTENT, "image/*", false, false));
+        candidates.add(pickerIntent(Intent.ACTION_PICK, "image/*", false, false));
+
+        Intent openAny = pickerIntent(Intent.ACTION_OPEN_DOCUMENT, "*/*", true, true);
+        candidates.add(openAny);
+        candidates.add(pickerIntent(Intent.ACTION_OPEN_DOCUMENT, "*/*", false, true));
+        candidates.add(pickerIntent(Intent.ACTION_GET_CONTENT, "*/*", true, true));
+        candidates.add(pickerIntent(Intent.ACTION_GET_CONTENT, "*/*", false, true));
+        candidates.add(pickerIntent(Intent.ACTION_PICK, "*/*", false, true));
+
+        for (Intent candidate : candidates) {
+            try {
+                List<?> handlers = getPackageManager().queryIntentActivities(
+                        candidate, PackageManager.MATCH_DEFAULT_ONLY);
+                if (handlers == null || handlers.isEmpty()) continue;
+                Intent launch = handlers.size() > 1
+                        ? Intent.createChooser(candidate,
+                        Txt.s(this, "Выбрать изображение", "Choose an image"))
+                        : candidate;
+                startActivityForResult(launch, REQ_WALLPAPER);
+                return;
+            } catch (ActivityNotFoundException ignored) {
+                // Try the next, less specific request.
+            } catch (SecurityException ignored) {
+                // A picker that is present but not exported to the launcher.
+            }
         }
 
-        Intent get = new Intent(Intent.ACTION_GET_CONTENT);
-        get.addCategory(Intent.CATEGORY_OPENABLE);
-        get.setType("image/*");
-        try {
-            startActivityForResult(get, REQ_WALLPAPER);
-        } catch (ActivityNotFoundException e) {
-            if (isFinishing()) return;
-            tracked(new InfoDialog(this,
-                    Txt.s(this, "Нет выбора файлов", "No file picker"),
-                    Txt.s(this, "На этом телевизоре нет приложения для выбора изображений.",
-                            "This television has no app for choosing images."))).show();
+        if (isFinishing()) return;
+        tracked(new InfoDialog(this,
+                Txt.s(this, "Нет выбора файлов", "No file picker"),
+                Txt.s(this, "Не найдено приложение для выбора изображений. Установите галерею или файловый менеджер, который умеет выбирать файлы.",
+                        "No app for choosing images was found. Install a gallery or a file manager that can pick files."))).show();
+    }
+
+    private Intent pickerIntent(String action, String type, boolean openable,
+                                boolean imageTypes) {
+        Intent i = new Intent(action);
+        i.setType(type);
+        if (openable) i.addCategory(Intent.CATEGORY_OPENABLE);
+        if (imageTypes) {
+            i.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{"image/*"});
         }
+        return i;
     }
 
     private final Runnable weatherTick = new Runnable() {
@@ -2304,7 +2756,7 @@ public class MainActivity extends Activity {
     private void initSoundEffects() {
         try {
             sfx = new SoundPool.Builder()
-                    .setMaxStreams(6)
+                    .setMaxStreams(8)
                     .setAudioAttributes(new AudioAttributes.Builder()
                             .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
                             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
@@ -2317,11 +2769,15 @@ public class MainActivity extends Activity {
                     if (sampleId == tickSound) tickReady = true;
                     else if (sampleId == forwardSound) forwardReady = true;
                     else if (sampleId == backSound) backReady = true;
+                    else if (sampleId == edgeSound) edgeReady = true;
+                    else if (sampleId == notifySound) notifyReady = true;
                 }
             });
             tickSound = loadSound("tick.wav", "vafic-tick.wav");
             forwardSound = loadSound("forward.wav", "vafic-forward.wav");
             backSound = loadSound("back.wav", "vafic-back.wav");
+            edgeSound = loadSound("edge.wav", "vafic-edge.wav");
+            notifySound = loadSound("notification.wav", "vafic-notification.wav");
         } catch (Exception e) {
             if (sfx != null) {
                 try {
@@ -2333,9 +2789,13 @@ public class MainActivity extends Activity {
             tickSound = 0;
             forwardSound = 0;
             backSound = 0;
+            edgeSound = 0;
+            notifySound = 0;
             tickReady = false;
             forwardReady = false;
             backReady = false;
+            edgeReady = false;
+            notifyReady = false;
         }
     }
 
@@ -2346,29 +2806,30 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * A short glass tick on every focus move. Rapid movement plays it a little
-     * higher and softer; slower movement gets the full, warmer tick. The tiny
-     * minimum interval prevents the SoundPool from machine-gunning.
+     * A short glass tick on every focus move. It follows the supplied Focus
+     * Move cue; the tiny minimum interval prevents the SoundPool from
+     * machine-gunning it while a direction is held.
      */
     void playNavTick() {
         if (!Prefs.sfx(this) || sfx == null || tickSound == 0 || !tickReady) return;
         long now = SystemClock.uptimeMillis();
+        // Подавляем звук курсора, если только что прозвучал звук открытия/закрытия (forward/back)
+        if (now - lastForwardSound < 280 || now - lastBackSound < 280) return;
         long dt = now - lastNavSound;
-        if (dt < 28) return;
+        if (dt < 45) return;
         lastNavSound = now;
-        float rate = dt < 120 ? 1.07f : 0.99f;
         float level = Prefs.sfxVolume(this);
-        float volume = (dt < 120 ? 0.38f : 0.50f) * level;
-        sfx.play(tickSound, volume, volume, 1, 0, rate);
+        float volume = (dt < 120 ? 0.38f : 0.48f) * level;
+        sfx.play(tickSound, volume, volume, 1, 0, 1f);
     }
 
     /** Rising glass note: opening a menu, the library or an app. */
     void playForward() {
         if (!Prefs.sfx(this) || sfx == null || forwardSound == 0 || !forwardReady) return;
         long now = SystemClock.uptimeMillis();
-        if (now - lastForwardSound < 110) return;
+        if (now - lastForwardSound < 140) return;
         lastForwardSound = now;
-        float volume = 0.36f * Prefs.sfxVolume(this);
+        float volume = 0.32f * Prefs.sfxVolume(this);
         sfx.play(forwardSound, volume, volume, 1, 0, 1f);
     }
 
@@ -2376,10 +2837,30 @@ public class MainActivity extends Activity {
     void playBack() {
         if (!Prefs.sfx(this) || sfx == null || backSound == 0 || !backReady) return;
         long now = SystemClock.uptimeMillis();
-        if (now - lastBackSound < 110) return;
+        if (now - lastBackSound < 140) return;
         lastBackSound = now;
-        float volume = 0.34f * Prefs.sfxVolume(this);
+        float volume = 0.30f * Prefs.sfxVolume(this);
         sfx.play(backSound, volume, volume, 1, 0, 1f);
+    }
+
+    /** The soft stop when the dock cannot scroll any further. */
+    void playEdge() {
+        if (!Prefs.sfx(this) || sfx == null || edgeSound == 0 || !edgeReady) return;
+        long now = SystemClock.uptimeMillis();
+        if (now - lastEdgeSound < 160) return;
+        lastEdgeSound = now;
+        float volume = 0.40f * Prefs.sfxVolume(this);
+        sfx.play(edgeSound, volume, volume, 1, 0, 1f);
+    }
+
+    /** A new notification banner slides in with its own short cue. */
+    void playNotification() {
+        if (!Prefs.sfx(this) || sfx == null || notifySound == 0 || !notifyReady) return;
+        long now = SystemClock.uptimeMillis();
+        if (now - lastNotifySound < 600) return;
+        lastNotifySound = now;
+        float volume = 0.44f * Prefs.sfxVolume(this);
+        sfx.play(notifySound, volume, volume, 1, 0, 1f);
     }
 
     private void copyAsset(String name, File out) throws Exception {
@@ -2405,11 +2886,36 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        int code = event.getKeyCode();
-        if (code == KeyEvent.KEYCODE_HOME) {
+        int rawCode = event.getKeyCode();
+        if (rawCode == KeyEvent.KEYCODE_HOME || rawCode == KeyEvent.KEYCODE_BUTTON_MODE) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) goHome();
             return true;
         }
+        // Горячие кнопки геймпада (когда не открыт режим перемещения):
+        if (dialogs.isEmpty() && !libraryMoving && movePkg == null && event.getAction() == KeyEvent.ACTION_DOWN) {
+            // Кнопка X на геймпаде — сразу открывает контекстное меню приложения (как долгий OK)
+            if (rawCode == KeyEvent.KEYCODE_BUTTON_X) {
+                View f = getCurrentFocus();
+                if (f != null && f.performLongClick()) return true;
+            }
+            // Кнопка Y на геймпаде — переключает экран «Все приложения»
+            if (rawCode == KeyEvent.KEYCODE_BUTTON_Y) {
+                if (libraryOpen) closeLibrary();
+                else openLibrary();
+                return true;
+            }
+            // Кнопка START / SELECT — открывает настройки лаунчера
+            if (rawCode == KeyEvent.KEYCODE_BUTTON_START || rawCode == KeyEvent.KEYCODE_BUTTON_SELECT) {
+                showSettings();
+                return true;
+            }
+        }
+
+        // Превращаем BUTTON_A -> DPAD_CENTER и BUTTON_B -> BACK для всей остальной логики:
+        event = GamepadInput.normalizeKeyEvent(event);
+        int code = event.getKeyCode();
+        // Gear and TV buttons of the remote: some firmwares leave them to the launcher.
+        if (dialogs.isEmpty() && RemoteKeys.handle(this, event)) return true;
         // Any key means the user is at the remote: hold the screen on.
         if (event.getAction() == KeyEvent.ACTION_DOWN) keepAwake();
         boolean direction = code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT
@@ -2456,6 +2962,8 @@ public class MainActivity extends Activity {
             if (after != before && after >= 0) {
                 renderDock(false);
                 focusDock(after);
+            } else {
+                bumpDock(delta);
             }
             return true;
         }
@@ -2518,6 +3026,15 @@ public class MainActivity extends Activity {
         return dispatchToWindow(event);
     }
 
+    @Override
+    public boolean dispatchGenericMotionEvent(MotionEvent event) {
+        if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+            keepAwake();
+        }
+        if (GamepadInput.handleMotion(this, event)) return true;
+        return super.dispatchGenericMotionEvent(event);
+    }
+
     /**
      * Dispatches to the view tree, then moves D-pad focus itself if nothing
      * handled the event. Doing the move here means ViewRootImpl never reaches
@@ -2543,11 +3060,23 @@ public class MainActivity extends Activity {
         d.setOnKeyListener(new DialogInterface.OnKeyListener() {
             @Override
             public boolean onKey(DialogInterface dialog, int keyCode, KeyEvent event) {
-                if (keyCode == KeyEvent.KEYCODE_HOME) {
+                if (keyCode == KeyEvent.KEYCODE_HOME || keyCode == KeyEvent.KEYCODE_BUTTON_MODE) {
                     if (event.getAction() == KeyEvent.ACTION_DOWN && a instanceof MainActivity) {
                         ((MainActivity) a).goHome();
                     }
                     return true;
+                }
+                // Кнопка B на геймпаде закрывает диалог со звуком назад:
+                if (keyCode == KeyEvent.KEYCODE_BUTTON_B) {
+                    if (event.getAction() == KeyEvent.ACTION_UP) {
+                        if (a instanceof MainActivity) ((MainActivity) a).playBack();
+                        dialog.dismiss();
+                    }
+                    return true;
+                }
+                // Кнопка A на геймпаде нажимает выбранный элемент в диалоге:
+                if (keyCode == KeyEvent.KEYCODE_BUTTON_A && d.getWindow() != null) {
+                    return d.getWindow().superDispatchKeyEvent(GamepadInput.normalizeKeyEvent(event));
                 }
                 if (keyCode == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP
                         && a instanceof MainActivity) {
@@ -2567,10 +3096,14 @@ public class MainActivity extends Activity {
                         public void onGlobalFocusChanged(View oldFocus, View newFocus) {
                             if (newFocus == null || newFocus == oldFocus
                                     || !newFocus.isClickable()) return;
+                            newFocus.setSoundEffectsEnabled(false);
+                            // Первый элемент при открытии диалога (oldFocus == null) не должен тикать
+                            if (oldFocus == null) return;
                             if (a instanceof MainActivity) ((MainActivity) a).playNavTick();
                         }
                     });
         }
+        GamepadInput.attachToDialog(d, a);
     }
 
     private <T extends Dialog> T tracked(final T d) {
@@ -2629,6 +3162,7 @@ public class MainActivity extends Activity {
         // The artwork is warmed up in the background. While another app is in
         // front the launcher must not take the CPU away from it.
         AppRepo.setPrefetchPaused(true);
+        GamepadInput.stop();
         if (ring != null) ring.pause();
         handler.removeCallbacks(sleepAllow);
         handler.removeCallbacks(weatherTick);
@@ -2694,6 +3228,8 @@ public class MainActivity extends Activity {
         }
 
         if (!Prefs.music(this)) stopMusic();
+
+        maybeAskNotifAccess();
 
         View f = getCurrentFocus();
         if (f instanceof TileView && ring != null) ring.follow((TileView) f);

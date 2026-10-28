@@ -1,11 +1,11 @@
 # Vafic Launcher
 
 A quiet, controller-first home screen for Android TV. Three full rows, a fixed
-header, a resizable dock of three to eight apps, optional weather and a short
-forecast next to the clock, a live-updating library with hidden apps and
-in-app deletion, a PS5-style focus outline and Windows-Aero glass surfaces —
-built without AndroidX or Gradle. A small aapt2 resource step localizes the app
-name to English and Russian.
+header, a scrollable dock that shows three to eight apps at a time and holds up
+to 24, optional weather and a short forecast next to the clock, a live-updating
+library with hidden apps and in-app deletion, a PS5-style focus outline and
+Windows-Aero glass surfaces — built without AndroidX or Gradle. A small aapt2
+resource step localizes the app name to English and Russian.
 
 [Русская версия](README.ru.md)
 
@@ -38,11 +38,11 @@ More screenshots, including the app menu and network panel, are in
 ## Features
 
 - **Home.** Clock and localized date, optional current weather with a short
-  forecast, a dock of three to eight apps, and a fixed status cluster with
-  notifications, network and **launcher settings**. Press Up from the dock to
-  enter the status cluster; Down returns to the dock. The gear opens the
-  launcher settings menu, which has a **System settings** entry for Android TV
-  settings.
+  forecast, a dock that shows three to eight apps at once and holds up to 24,
+  and a fixed status cluster with notifications, network and **launcher
+  settings**. Press Up from the dock to enter the status cluster; Down returns
+  to the dock. The gear opens the launcher settings menu, which has a **System
+  settings** entry for Android TV settings.
 - **Weather.** Off by default. When enabled it shows the current temperature,
   condition and a short forecast next to the clock. The city is detected
   automatically or picked from a preset list / typed by hand, and the data can
@@ -69,12 +69,18 @@ More screenshots, including the app menu and network panel, are in
   apps stay alphabetical at the end.
 - **PS5-style focus.** A thin border hugs the card with a soft pearl-white
   gradient travelling around it. The outline is drawn above the glass layers.
+  While the dock or library moves, the outline follows its card; at the dock
+  edge it is clipped and faded with the artwork instead of ending in a line.
+- **Scrollable dock.** The dock shows three to eight cards at a time and holds
+  up to 24 apps. Moving past the visible window scrolls the row one card at a
+  time, with a soft fade at the plate edges and a short resistance nudge at
+  either end. The focus outline stays inside the plate while the row moves.
 - **Dock editing.** Long-press OK on a dock card to move, remove, hide or delete
   it. Long-press OK in the library to add/remove an app from the dock, move it
-  in the library, hide it or delete it. The dock holds three to eight apps; the
-  **Dock** settings scale the cards, directly set how many apps fit and can hide
-  the app names under them. Without names the cards grow taller, so their
-  artwork fills the freed space; names are shown by default.
+  in the library, hide it or delete it. The **Dock** settings change how many
+  cards are visible at once and can hide the app names under them. Changing the
+  visible count never removes apps. Without names the cards grow taller, so
+  their artwork fills the freed space; names are shown by default.
 - **First run.** The dock starts with a single **+** card. Press it (or Down) to
   open the library, then long-press an app and choose **Add to dock**. If the
   last app is removed, the **+** card returns.
@@ -87,7 +93,9 @@ More screenshots, including the app menu and network panel, are in
   slides down from the top, queues multiple alerts and leaves D-pad focus
   untouched. Notifications waiting when access is granted are not replayed;
   foreground-service updates and apps muted in the notification filter do not
-  pop up.
+  pop up. On first start without access, a prompt offers **Grant access**,
+  **Later** and **Don't remind me**. The notification badge and **App
+  notifications** settings open the same prompt or the system access screen.
 - **Aero-glass surfaces.** Cards, the dock and every panel are built from the
   same Windows-Aero material: cool blue translucent glass, a milky gloss along
   the top edge, a diagonal reflection, a bright blue rim and a soft shadow that
@@ -95,10 +103,11 @@ More screenshots, including the app menu and network panel, are in
 - **Separate sound controls.** A rising glass note opens menus, the library and
   apps; a falling note goes back and closes panels. Focus ticks are played on
   every selectable element: the dock tiles, the top status cluster and the rows
-  of the menus. Background music and interface sounds each have their own
-  switch and volume slider. The music keeps its level while an interface sound
-  plays, and the framework's duplicate focus/click effects are suppressed, so
-  only the launcher's own sound is heard.
+  of the menus. The dock edge and a new notification have their own short cues.
+  Background music and interface sounds each have their own switch and volume
+  slider. The music keeps its level while an interface sound plays, and the
+  framework's duplicate focus/click effects are suppressed, so only the
+  launcher's own sound is heard.
 - **Wallpaper.** Pick a personal photo or keep the built-in Aero background.
   The **Background dim** slider applies the same darkening to both.
 - **Language selection.** System, Russian or English, chosen from an anchored
@@ -114,21 +123,17 @@ More screenshots, including the app menu and network panel, are in
 | Button | Action |
 |---|---|
 | ← → ↑ ↓ | Move focus; in the library, move through the grid |
-| ← → on a slider | Change a volume, the wallpaper dim or the dock size |
+| ← → on a slider | Change a volume, the wallpaper dim or the number of visible dock cards |
 | ↑ from dock | Focus the status cluster (notifications / network / launcher settings) |
 | OK | Open an app / panel / menu item; finish a move |
+| Gamepad A / left-stick click | OK |
+| Gamepad B | BACK |
+| Gamepad D-pad / left stick / hat | Move focus, with hold-to-repeat through the launcher and its dialogs |
+| Gear (remote) | Open Android TV settings |
+| TV (remote) | Open Live TV or the channel list when available |
 | Long OK | App menu: add/remove dock, move in the library, hide or delete the app, or move a dock card |
 | BACK | Close a panel/menu, leave the library, or cancel a move |
 | HOME | Return to the home screen and focus the first dock card |
-
-
-
-The last command is optional: without notification access the launcher still
-works, but the notification badge and shade stay empty. You can also grant access
-in **Settings → Apps → Special app access → Notification access**.
-
-Set Vafic Launcher as the home app in the TV settings if another launcher is
-currently selected. The APK targets Android 14 (API 34) and supports API 23+.
 
 ## Settings
 
@@ -137,16 +142,18 @@ right). Launcher settings are not duplicated in the long-press menus.
 
 - **Sound** — independent switches and volume levels for the background music
   and the interface sounds.
-- **Dock** — card size from smallest (up to eight apps) to largest (three
-  apps), limited to the largest size that still holds the current dock. Hide
-  **App names** to remove the captions and let the cards grow taller.
+- **Dock** — how many cards are visible at once, from eight (smallest) to
+  three (largest). The rest of the dock scrolls; changing the size never
+  removes apps. Hide **App names** to remove the captions and let the cards
+  grow taller.
 - **Weather** — show or hide the whole section, show or hide the short
   forecast, choose the city, refresh now. Off by default; no network requests
   while off.
 - **Wallpaper** — choose a photo, restore the built-in background, and set the
   background dim for either one.
 - **Language** — System / Русский / English in an anchored dropdown.
-- **App notifications** — per-app notification filter.
+- **App notifications** — notification access status (opens the system screen)
+  and the per-app notification filter.
 - **Hidden apps** — the apps that were hidden from the library; open one to
   bring it back, or restore all of them.
 - **System settings** — open the Android TV settings.
@@ -156,7 +163,7 @@ The background track is a full lossless FLAC in `assets/ambient.flac`. It is
 played as it is and loops seamlessly: the track fades out at the end and fades
 in at the beginning, so the loop point is smooth and the sound is untouched.
 The interface sounds are original synthesized WAV files in `assets/`:
-`tick.wav`, `forward.wav` and `back.wav`.
+`tick.wav`, `forward.wav`, `back.wav`, `edge.wav` and `notification.wav`.
 
 ## Build from source
 
@@ -181,8 +188,8 @@ It writes `vafic-launcher.apk` next to the script.
 Signing:
 
 - By default a local debug keystore is created at `.keystore/vafic.keystore`
-  (ignored by git). This is fine for sideloading and personal builds. Keep this
-  file if you want future builds to install as an update over the current APK.
+  (ignored by git). This is fine for personal builds. Keep this file so future
+  builds use the same signing key.
 - For a release, provide your own key:
 
 ```powershell
@@ -204,7 +211,7 @@ linking.
 | `INTERNET` | Optional weather only; no requests while weather is off |
 | `ACCESS_NETWORK_STATE` | Show Wi-Fi/Ethernet/offline state |
 | `ACCESS_WIFI_STATE` | Read Wi-Fi signal level and SSID |
-| `BIND_NOTIFICATION_LISTENER_SERVICE` | Optional notification shade and heads-up banners |
+| `BIND_NOTIFICATION_LISTENER_SERVICE` | Optional notification shade, badge and heads-up banners |
 
 The app accesses the network only for the optional weather section. **Delete**
 does not uninstall anything by itself: it asks the system to show its normal
@@ -212,6 +219,12 @@ uninstall confirmation, and the package is removed only after the user confirms
 there. No other package is changed silently. Any system debloating is a separate
 device-level operation; it is not performed by the launcher. Uninstalling the
 launcher and selecting another home app is enough to revert the launcher itself.
+
+Notification access is a special system permission rather than a normal runtime
+permission. The launcher offers it once per start while it is missing; **Don't
+remind me** stops the prompt but leaves the **App notifications** row available.
+Until access is granted, the badge and shade stay empty and no notification
+content is read.
 
 ## Project layout
 

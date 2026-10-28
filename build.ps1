@@ -87,8 +87,8 @@ $sources = @(Get-ChildItem (Join-Path $proj "src") -Recurse -Filter *.java |
         ForEach-Object { $_.FullName })
 $sources += @(Get-ChildItem "$build\gen" -Recurse -Filter *.java -ErrorAction SilentlyContinue |
         ForEach-Object { $_.FullName })
-& (Join-Path $jdk "bin\javac.exe") -encoding UTF-8 -source 8 -target 8 -nowarn `
-        -bootclasspath $androidJar -classpath $androidJar -d "$build\obj" $sources
+& (Join-Path $jdk "bin\javac.exe") -encoding UTF-8 -source 11 -target 11 -g:none -nowarn `
+        -classpath $androidJar -d "$build\obj" $sources
 if ($LASTEXITCODE -ne 0) { throw "javac failed" }
 
 Write-Host "3/5 d8"
@@ -130,4 +130,3 @@ if (-not (Test-Path $ks)) {
 if ($LASTEXITCODE -ne 0) { throw "sign failed" }
 
 Get-Item (Join-Path $proj "vafic-launcher.apk") | Select-Object FullName, Length
-
